@@ -1,0 +1,20 @@
+[
+  {
+    "id": "ER-1",
+    "title": "Escape route clear width",
+    "attribute": "escape_route_width",
+    "operator": ">=",
+    "threshold": 1200,
+    "unit": "mm",
+    "labels": ["Escape route clear width"]
+  },
+  {
+    "id": "DS-1",
+    "title": "Guardrail height",
+    "attribute": "guardrail_height",
+    "operator": ">=",
+    "threshold": 1100,
+    "unit": "mm",
+    "labels": ["Guardrail height"]
+  }
+]
