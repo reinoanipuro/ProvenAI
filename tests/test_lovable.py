@@ -175,3 +175,33 @@ def test_a_check_cut_short_by_a_restart_is_closed(client):
     reloaded = client.get(f"/lovable/inspections/{inspection['id']}").json()
 
     assert reloaded["refining"] is False and reloaded["progress"]["label"] == "Done"
+
+
+def test_value_read_twice_is_not_checked_again_by_ai():
+    from backend.lovable import _uncovered_items
+
+    line = "Cabin corridor | Clear width 1,200 mm"
+    matched = {"element": "Cabin corridor", "attribute": "walking_route_clear_width", "value_text": "1,200 mm", "source_line": line, "source_file": "a.txt", "source_page": 1}
+    repeat = {**matched, "attribute": "unknown", "element": "cabin  corridor"}
+    other = {**matched, "attribute": "unknown", "value_text": "2 m", "source_line": "Cabin corridor | Height 2 m"}
+    assert _uncovered_items([matched, repeat, other, dict(other)], {"walking_route_clear_width"}) == [other]
+
+
+def test_next_steps_follow_the_order_of_the_document():
+    from backend.lovable import _next_steps
+
+    def result(element_id, status, order):
+        return {
+            "id": f"R:{element_id}", "element_id": element_id, "status": status, "required_inputs": ["x"],
+            "check_name": "Check", "rule_set": "ada", "required": "≥ 1", "unit": "mm", "measured": 0,
+            "recommendation": "", "reason": "", "sources": [], "clause_ref": "ADA 1", "evidence": [{"order": order}],
+        }
+
+    elements = [
+        {"id": "E1", "name": "Late item", "attrs": {"x": {"value_text": "1 mm", "order": 9}}},
+        {"id": "E2", "name": "Early item", "attrs": {"x": {"value_text": "2 mm", "order": 2}}},
+    ]
+    state = {"elements": elements, "warnings": [], "results": [result("E1", "FAIL", 9), result("E2", "UNKNOWN", 2)]}
+    steps = _next_steps(state)
+    assert [step["element_id"] for step in steps[:2]] == ["E2", "E1"]
+    assert all("_order" not in step for step in steps)

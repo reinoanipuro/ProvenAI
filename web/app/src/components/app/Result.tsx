@@ -22,7 +22,7 @@ const PDF = /\.pdf$/i;
 const TEXT = /\.(txt|md|csv|docx)$/i;
 
 /** One design value and every rule checked against it; several rule sets (ADA, PVAG) can check the same value. */
-interface Group { id: string; status: Status; element: ShipElement | undefined; main: Result; results: Result[] }
+interface Group { id: string; status: Status; original: Status; element: ShipElement | undefined; main: Result; results: Result[] }
 
 function groupResults(insp: Inspection): Group[] {
   const elements = new Map(insp.elements.map((e) => [e.id, e]));
@@ -34,7 +34,7 @@ function groupResults(insp: Inspection): Group[] {
   return [...groups.entries()].map(([id, results]) => {
     const sorted = [...results].sort((a, b) => RANK[a.status] - RANK[b.status]);
     const main = sorted[0]!;
-    return { id, status: main.status, element: elements.get(main.element_id), main, results: sorted };
+    return { id, status: main.status, original: main.status, element: elements.get(main.element_id), main, results: sorted };
   }).sort((a, b) => RANK[a.status] - RANK[b.status] || (a.element?.name ?? "").localeCompare(b.element?.name ?? ""));
 }
 
@@ -74,13 +74,46 @@ function Progress({ insp }: { insp: Inspection }) {
 }
 
 function Report({ insp }: { insp: Inspection }) {
-  const groups = useMemo(() => groupResults(insp), [insp]);
-  const byResult = useMemo(() => new Map(groups.flatMap((g) => g.results.map((r) => [r.id, g] as const))), [groups]);
   const steps = insp.next_steps ?? [];
+  const { set: doneSteps, toggle: toggleDone, clear: clearDone } = useStepSet(insp.id, "done-steps");
+  const { set: fixSteps, toggle: toggleFix } = useStepSet(insp.id, "fix-steps");
+  const stepsDone = steps.filter((s) => doneSteps.has(stepKey(s))).length;
+  // What a step is now: the engineer can mark it done (OK) or turn a CHECK into a FIX.
+  const kindOf = (s: NextStep): StepKind => doneSteps.has(stepKey(s)) ? "info" : s.kind === "fix" || fixSteps.has(stepKey(s)) ? "fix" : s.kind;
+  const statusOfStep = (s: NextStep): Status => { const k = kindOf(s); return k === "fix" ? "FAIL" : k === "info" ? "PASS" : "UNKNOWN"; };
+  const orderedSteps = steps;
+  // Notes on the same design element (often the same text in the document) sit together under its name.
+  const stepSections = useMemo(() => {
+    const sections: { key: string; name: string; steps: NextStep[] }[] = [];
+    const byElement = new Map<string, (typeof sections)[number]>();
+    for (const step of orderedSteps) {
+      const existing = step.element_id ? byElement.get(step.element_id) : undefined;
+      if (existing) { existing.steps.push(step); continue; }
+      const section = { key: step.element_id ?? `step-${step.number}`, name: "", steps: [step] };
+      if (step.element_id) byElement.set(step.element_id, section);
+      sections.push(section);
+    }
+    const elements = new Map(insp.elements.map((e) => [e.id, e.name]));
+    for (const section of sections) if (section.steps.length > 1) section.name = elements.get(section.key) ?? "Same element";
+    return sections;
+  }, [orderedSteps, insp.elements]);
+  const position = useMemo(() => new Map(stepSections.flatMap((s) => s.steps).map((step, i) => [step.number, i + 1] as const)), [stepSections]);
+  const baseGroups = useMemo(() => groupResults(insp), [insp]);
+  // A value takes the worst state of its steps, so the counters and the marks follow the engineer's choices.
+  const groups = useMemo(() => baseGroups.map((g): Group => {
+    if (g.original === "PASS") return g;
+    const mine = steps.filter((s) => s.result_ids.some((rid) => g.results.some((r) => r.id === rid)));
+    if (!mine.length) return g;
+    return { ...g, status: mine.map(statusOfStep).sort((a, b) => RANK[a] - RANK[b])[0]! };
+  }), [baseGroups, steps, doneSteps, fixSteps]); // eslint-disable-line react-hooks/exhaustive-deps
+  const byResult = useMemo(() => new Map(groups.flatMap((g) => g.results.map((r) => [r.id, g] as const))), [groups]);
   const fails = groups.filter((g) => g.status === "FAIL"), unknown = groups.filter((g) => g.status === "UNKNOWN"), passes = groups.filter((g) => g.status === "PASS");
+  const settledByEngineer = stepsDone > 0 && !fails.length && !unknown.length && groups.some((g) => g.original !== "PASS");
+  const allStepsDone = steps.length > 0 && stepsDone === steps.length;
   const files = insp.files.filter((f) => PDF.test(f.name) || TEXT.test(f.name));
   const [selected, setSelected] = useState<string | null>(null);
   const [openStep, setOpenStep] = useState<number | null>(null);
+  const [focusStep, setFocusStep] = useState<{ number: number; at: number } | null>(null);
   const [showOk, setShowOk] = useState(false);
   const [fileId, setFileId] = useState<string | null>(null);
   const current = groups.find((g) => g.id === selected) ?? null;
@@ -100,13 +133,22 @@ function Report({ insp }: { insp: Inspection }) {
     select(group);
     const step = steps.find((s) => s.result_ids.some((rid) => group.results.some((r) => r.id === rid)));
     setOpenStep(step?.number ?? null);
+    setFocusStep(step ? { number: step.number, at: Date.now() } : null);
     if (!step) document.getElementById("passed-list")?.setAttribute("open", "");
   }
-  const marked = groups.filter((g) => g.status !== "PASS" || showOk || g.id === selected);
+  // After a click in the document, scroll the notes list to the note that opened.
+  useEffect(() => {
+    if (!focusStep) return;
+    const frame = requestAnimationFrame(() => document.getElementById(`step-${focusStep.number}`)?.scrollIntoView({ block: "start", behavior: "smooth" }));
+    return () => cancelAnimationFrame(frame);
+  }, [focusStep]);
+  // A value the engineer settled (it was an issue or a check, and its steps are done) leaves the document.
+  const marked = groups.filter((g) => (g.original === "PASS" || g.status !== "PASS") && (g.status !== "PASS" || showOk || g.id === selected));
 
   const verdict = fails.length ? { label: "Not compliant", text: `${fails.length} issue${fails.length > 1 ? "s" : ""} found`, color: "var(--fail)" }
     : !groups.length ? { label: "Nothing checked", text: "No design values with a matching rule were found", color: "var(--unknown)" }
     : unknown.length ? { label: "No issues found · review needed", text: `${unknown.length} value${unknown.length > 1 ? "s" : ""} could not be checked automatically`, color: "var(--unknown)" }
+    : settledByEngineer ? { label: "Compliant", text: `${allStepsDone ? "Every step" : "Every open step"} is marked done by the engineer. The document itself was not checked again`, color: "var(--pass)" }
     : { label: "Compliant", text: "Every value that was found meets the regulations", color: "var(--pass)" };
 
   return <>
@@ -128,8 +170,8 @@ function Report({ insp }: { insp: Inspection }) {
 
     <Summary insp={insp} />
 
-    <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
-      <section className="sheet flex h-[78vh] min-h-[440px] flex-col overflow-hidden">
+    <div className="report-grid mt-4 grid gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
+      <section className="sheet sheet-noprint flex h-[78vh] min-h-[440px] flex-col overflow-hidden">
         <div className="flex items-stretch justify-between border-b border-[var(--foreground)] bg-[var(--background)]">
           <div role="tablist" className="flex min-w-0 overflow-x-auto">
             {files.map((f) => <button key={f.id} role="tab" aria-selected={f.id === file?.id} className="sheet-tab" onClick={() => setFileId(f.id)}>
@@ -147,17 +189,29 @@ function Report({ insp }: { insp: Inspection }) {
           : <PdfDocument insp={insp} file={file} groups={marked} selected={selected} onSelect={selectFromDocument} />}
       </section>
 
-      <div className="flex flex-col gap-4 lg:max-h-[78vh] lg:overflow-y-auto">
+      <div className="report-side flex flex-col gap-4 lg:max-h-[78vh] lg:overflow-y-auto">
         <section className="sheet">
-          <div className="sheet-heading"><span>What to do now</span><span className="sheet-mono font-normal">{steps.length} step{steps.length === 1 ? "" : "s"}</span></div>
-          <ol>{steps.map((step) => <StepItem key={step.number} step={step} open={openStep === step.number} onToggle={() => toggleStep(step)}
-            groups={[...new Set(step.result_ids.map((rid) => byResult.get(rid)).filter((g): g is Group => !!g))]} onShow={select} />)}</ol>
+          <div className="sheet-heading"><span>What to do now</span><span className="sheet-mono flex items-center gap-3 font-normal">
+            <button type="button" className="sheet-noprint text-xs normal-case tracking-normal underline disabled:no-underline disabled:opacity-40" disabled={stepsDone === 0} onClick={clearDone}>Uncheck all steps</button>
+            {stepsDone} of {steps.length} done</span></div>
+          <ol>{stepSections.map((section) => {
+            const items = section.steps.map((step) => <StepItem key={step.number} step={step} position={position.get(step.number) ?? step.number} kind={kindOf(step)} open={openStep === step.number} onToggle={() => toggleStep(step)}
+              done={doneSteps.has(stepKey(step))} onDone={() => toggleDone(step)}
+              canFix={step.kind !== "fix" && step.kind !== "info"} isFix={fixSteps.has(stepKey(step))} onFix={() => toggleFix(step)}
+              groups={[...new Set(step.result_ids.map((rid) => byResult.get(rid)).filter((g): g is Group => !!g))]} onShow={select} />);
+            if (!section.name) return items;
+            const finished = section.steps.filter((s) => doneSteps.has(stepKey(s))).length;
+            return <li key={section.key} className="sheet-step-category">
+              <p className="sheet-step-category-title"><span>{section.name}</span><span className="sheet-mono font-normal">{section.steps.length} notes · {finished} done</span></p>
+              <ol>{items}</ol>
+            </li>;
+          })}</ol>
           {insp.refining && <p className="flex items-center gap-2 border-t border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)]"><span className="sheet-spinner" />{insp.progress.label}. The steps update when it finishes.</p>}
         </section>
         <details id="passed-list" className="sheet" open={!!current && current.status === "PASS"}>
           <summary className="sheet-heading cursor-pointer"><span style={{ color: COLOR.PASS }}>Meets the regulations</span><span className="sheet-mono font-normal">{passes.length}</span></summary>
           {!passes.length ? <p className="p-3 text-sm text-[var(--muted-foreground)]">Nothing passed.</p> : <ul>{passes.map((g) => <li key={g.id} className="sheet-step" data-open={selected === g.id || undefined} style={{ ["--step-color" as string]: COLOR.PASS }}>
-            <button type="button" onClick={() => select(selected === g.id ? null : g)}><span style={{ color: COLOR.PASS }}>✓</span><span className="min-w-0"><span className="block font-semibold">{g.element?.name ?? g.main.element_id}</span><span className="block text-sm">{shortName(g.main)} · <span className="sheet-mono">{measuredText(g)} (required {g.main.required} {g.main.unit})</span></span></span></button>
+            <button type="button" onClick={() => select(selected === g.id ? null : g)}><span style={{ color: COLOR.PASS }}>✓</span><span className="min-w-0"><span className="block font-semibold">{g.element?.name ?? g.main.element_id}{g.original !== "PASS" && <span className="ml-2 text-xs font-normal text-[var(--muted-foreground)]">marked done by the engineer</span>}</span><span className="block text-sm">{shortName(g.main)} · <span className="sheet-mono">{measuredText(g)} (required {g.main.required} {g.main.unit})</span></span></span></button>
             {selected === g.id && <div className="px-3 pb-3"><Evidence group={g} onShow={select} /></div>}
           </li>)}</ul>}
         </details>
@@ -181,15 +235,54 @@ function Summary({ insp }: { insp: Inspection }) {
   </section>;
 }
 
-function StepItem({ step, open, onToggle, groups, onShow }: { step: NextStep; open: boolean; onToggle: () => void; groups: Group[]; onShow: (g: Group) => void }) {
-  const kind = KIND[step.kind];
-  return <li className="sheet-step" data-open={open || undefined} style={{ ["--step-color" as string]: kind.color }}>
-    <button type="button" onClick={onToggle} aria-expanded={open}>
-      <span className="sheet-step-number">{step.number}</span>
-      <span className="min-w-0 flex-1"><span className="sheet-tag" style={{ color: kind.color }}>{kind.label}</span><span className="mt-1 block font-semibold">{step.title}</span></span>
-    </button>
+/** Which steps the engineer ticked off, kept in this browser per inspection. The key survives the steps being renumbered. */
+const stepKey = (step: NextStep) => `${step.kind}|${step.title}|${step.result_ids.join(",")}`;
+
+function useStepSet(inspectionId: string, name: string) {
+  const storageKey = `provenai-${name}-${inspectionId}`;
+  const [set, setDone] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(localStorage.getItem(storageKey) ?? "[]")); } catch { return new Set<string>(); }
+  });
+  function toggle(step: NextStep) {
+    setDone((old) => {
+      const next = new Set(old);
+      const key = stepKey(step);
+      if (!next.delete(key)) next.add(key);
+      try { localStorage.setItem(storageKey, JSON.stringify([...next])); } catch { /* the ticks then last until the page is closed */ }
+      return next;
+    });
+  }
+  function clear() {
+    setDone(new Set());
+    try { localStorage.removeItem(storageKey); } catch { /* nothing stored */ }
+  }
+  return { set, toggle, clear };
+}
+
+function StepItem({ step, position, kind: kindName, open, onToggle, groups, onShow, done, onDone, canFix, isFix, onFix }: {
+  step: NextStep; position: number; kind: StepKind; open: boolean; onToggle: () => void; groups: Group[]; onShow: (g: Group) => void;
+  done: boolean; onDone: () => void; canFix: boolean; isFix: boolean; onFix: () => void;
+}) {
+  const kind = KIND[kindName];
+  return <li id={`step-${step.number}`} className="sheet-step scroll-mt-2" data-open={open || undefined} data-done={done || undefined} style={{ ["--step-color" as string]: kind.color }}>
+    <div className="sheet-step-row">
+      <button type="button" className="sheet-step-number" aria-pressed={done} onClick={onDone}
+        title={done ? "Done. Click to mark as not done" : "Click to mark this step as done"} aria-label={`Step ${position}: ${done ? "done" : "not done"}`}>{done ? "✓" : position}</button>
+      <button type="button" onClick={onToggle} aria-expanded={open}>
+        <span className="min-w-0 flex-1"><span className="sheet-tag" style={{ color: kind.color }}>{kind.label}</span><span className="sheet-step-title mt-1 block font-semibold">{step.title}</span></span>
+      </button>
+    </div>
+    {!open && !done && <div className="print-only px-3 pb-3 pl-[44px] text-sm">
+      <p>{step.detail}</p>
+      {groups[0]?.main.evidence[0]?.quote && <p className="sheet-mono text-xs">In your document: “{groups[0].main.evidence[0].quote}”</p>}
+      {groups[0]?.main.sources?.[0]?.filename && <p className="text-xs">Regulation: {groups[0].main.sources[0].filename}, page {groups[0].main.sources[0].page}</p>}
+    </div>}
     {open && <div className="space-y-3 px-3 pb-4 pl-[44px] text-sm">
       <p>{step.detail}</p>
+      <div className="sheet-noprint flex flex-wrap gap-2">
+        <button type="button" className="sheet-button h-7 px-2 text-xs" onClick={onDone}>{done ? "Mark as not done" : "Mark as done (OK)"}</button>
+        {canFix && !done && <button type="button" className="sheet-button h-7 px-2 text-xs" onClick={onFix}>{isFix ? "Change to CHECK" : "Change to FIX"}</button>}
+      </div>
       {groups.map((g) => <Evidence key={g.id} group={g} onShow={onShow} />)}
       {!groups.length && step.source?.filename && step.source.page != null && <RegulationPage source={step.source} />}
     </div>}
@@ -209,7 +302,7 @@ function Evidence({ group, onShow }: { group: Group; onShow: (g: Group) => void 
     {doc?.quote && <p><span className="sheet-label">In your document</span><br /><span className="sheet-mono text-[13px]">“{doc.quote}”</span> <span className="text-xs text-[var(--muted-foreground)]">{doc.source_file}{doc.page ? `, page ${doc.page}` : ""}</span>
       {" "}<button type="button" className="sheet-noprint text-xs underline" onClick={() => onShow(group)}>Show in the document</button></p>}
     <div><span className="sheet-label">Regulation</span>
-      <ul className="mt-1 space-y-2">{group.results.map((rule) => <li key={rule.id}>
+      <ul className="mt-1 space-y-2">{distinctRules(group.results).map((rule) => <li key={rule.id}>
         <span className="font-semibold" style={{ color: COLOR[rule.status] }}>{rule.status === "FAIL" ? "Not met" : rule.status === "PASS" ? "Met" : "Not checked"}</span>
         {" · "}{rule.clause_ref.split(" · ")[0]}
         {(rule.sources ?? []).slice(0, rule.sources?.[0]?.closest ? 2 : 1).map((source, index) => source.filename && source.page != null ? <RegulationPage key={index} source={source} /> : null)}
@@ -271,6 +364,18 @@ function TextDocument({ insp, file, groups, selected, onSelect }: { insp: Inspec
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return <tr className="border-b border-[var(--border)]"><td className="sheet-label w-24 py-1 pr-2 align-top">{label}</td><td className="py-1">{children}</td></tr>;
+}
+
+/** A rule with a minimum and a maximum is two checks on the same clause and page; show that clause once per outcome. */
+function distinctRules(results: Result[]): Result[] {
+  const seen = new Set<string>();
+  return results.filter((rule) => {
+    const source = rule.sources?.[0];
+    const key = [rule.status, rule.clause_ref, source?.filename, source?.page, norm(source?.quote ?? "")].join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function shortName(r: Result) { return r.check_name.replace(/ on passenger vessels$/, ""); }

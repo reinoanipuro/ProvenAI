@@ -61,6 +61,17 @@
 .sheet-step { border-bottom: 1px solid var(--border); }
 .sheet-step > button { width: 100%; display: flex; gap: 10px; align-items: flex-start; padding: 10px; text-align: left; }
 .sheet-step[data-open] { background: var(--background); box-shadow: inset 3px 0 0 var(--step-color, var(--foreground)); }
+.sheet-step-category { border-bottom: 1px solid var(--border); background: var(--background); }
+.sheet-step-category-title { display: flex; justify-content: space-between; gap: 8px; padding: 6px 10px; font: 600 12px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--border); }
+.sheet-step-category > ol { margin-left: 14px; border-left: 2px solid var(--foreground); }
+.sheet-step-category > ol > .sheet-step:last-child { border-bottom: 0; }
+.sheet-step-row { display: flex; align-items: flex-start; }
+.sheet-step-row > button:not(.sheet-step-number) { flex: 1; min-width: 0; display: flex; gap: 10px; align-items: flex-start; padding: 10px 10px 10px 0; text-align: left; }
+.sheet-step-row > .sheet-step-number { margin: 10px 10px 0; cursor: pointer; }
+.sheet-step-row > .sheet-step-number:hover { background: var(--pass); border-color: var(--pass); color: var(--background); }
+.sheet-step[data-done] .sheet-step-title, .sheet-step[data-done] .sheet-tag { text-decoration: line-through; }
+.sheet-step[data-done] .sheet-step-row > button:not(.sheet-step-number) { opacity: 0.55; }
+.sheet-step[data-done] .sheet-step-number { background: var(--pass); border-color: var(--pass); color: var(--background); }
 .sheet-step-number { flex-shrink: 0; width: 24px; height: 24px; border: 1px solid var(--foreground); border-radius: 50%; font: 600 12px/22px var(--font-mono); text-align: center; }
 .sheet-quote { border-left: 2px solid var(--border); padding-left: 10px; color: var(--muted-foreground); }
 .sheet-doc-line { display: block; padding: 2px 8px; border: 1px solid transparent; font: 13px/1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -73,4 +84,12 @@
 .sheet-tab[aria-selected="true"] { background: var(--card); font-weight: 600; box-shadow: inset 0 -2px 0 var(--foreground); }
 @keyframes sheet-spin { to { transform: rotate(360deg); } }
 .sheet-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: sheet-spin 900ms linear infinite; }
-@media print { .sheet-noprint { display: none !important; } }
+.print-only { display: none; }
+@media print {
+  .sheet-noprint { display: none !important; }
+  .print-only { display: block !important; }
+  .report-grid { display: block !important; }
+  .report-side { max-height: none !important; overflow: visible !important; }
+  .report-side > * { margin-bottom: 12px; }
+  .sheet-step, .sheet { break-inside: avoid; }
+}

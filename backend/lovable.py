@@ -296,6 +296,7 @@ def _attr(item: dict, rule: LibraryRule | None, folder: Path) -> dict:
         "quote": item.get("source_line") or f"{item['element']}: {item['value_text']}",
         "source_file": item.get("source_file") or "typed input",
         "page": item.get("source_page"),
+        "order": item.get("source_order"),
         "section": item.get("property", ""),
         "method": "Text",
     }
@@ -509,11 +510,13 @@ def _next_steps(state: dict) -> list[dict]:
     steps: list[dict] = []
 
     def add(kind: str, title: str, detail: str, group: dict | None = None, source: dict | None = None) -> None:
+        position = group["attr"].get("order") if group else None
         steps.append({
             "kind": kind, "title": title, "detail": detail,
             "result_ids": [result["id"] for result in group["results"]] if group else [],
             "element_id": group["element"].get("id") if group else None,
             "source": source,
+            "_order": position if position is not None else 10**9,
         })
 
     groups = _groups(state)
@@ -559,6 +562,8 @@ def _next_steps(state: dict) -> list[dict]:
             add("measure", f"State the {label or 'value'} of {name}",
                 f"The document does not state it clearly, so {_rules_text(group['results'])} could not be checked. "
                 "Add the value to the document and check it again.", group, source)
+    # The engineer works down the document, so the notes follow the order of the values in it.
+    steps.sort(key=lambda step: step["_order"])
     for warning in state.get("warnings", [])[:5]:
         add("check", "Check what could not be read", warning)
     if not groups:
@@ -573,6 +578,7 @@ def _next_steps(state: dict) -> list[dict]:
             f"All {len(groups)} values that were found meet the regulations. Keep this result as the check record.")
     for number, step in enumerate(steps, start=1):
         step["number"] = number
+        step.pop("_order", None)
     return steps
 
 
@@ -684,7 +690,7 @@ def _run(state: dict, files: list[tuple[str, bytes]], get_llm, get_retriever) ->
         state["_citations"] = _citations(rules, retriever)
         catalog = load_catalog()
         covered = {rule.attribute for rule in rules}
-        unmatched = [item for item in items if item["attribute"] not in covered]
+        unmatched = _uncovered_items(items, covered)
         ai_results = []
         for number, item in enumerate(unmatched, start=1):
             # Only the regulation search here, which takes seconds; Mistral reads the passages afterwards.
@@ -705,6 +711,28 @@ def _run(state: dict, files: list[tuple[str, bytes]], get_llm, get_retriever) ->
             state["refining"] = False
             state["progress"] = {"step": state["progress"]["step"], "label": f"Failed: {error}"}
             _save(state)
+
+
+def _uncovered_items(items: list[dict], covered: set[str]) -> list[dict]:
+    """Items for the AI lookup: values no rule covers, without repeats of a value a rule already checks.
+
+    Mistral can read one printed value twice, once matched to a rule and once as an
+    unknown property. The second reading must not become a separate "to check" finding.
+    """
+    def same_value(item: dict) -> tuple:
+        line = (item.get("source_line") or "").split(" | ")[-1]
+        squash = lambda text: re.sub(r"\s+", " ", str(text or "")).strip().lower()
+        return (squash(item["element"]), squash(item["value_text"]), squash(line), item.get("source_file"), item.get("source_page"))
+
+    checked = {same_value(item) for item in items if item["attribute"] in covered}
+    unmatched, seen = [], set()
+    for item in items:
+        key = same_value(item)
+        if item["attribute"] in covered or key in checked or key in seen:
+            continue
+        seen.add(key)
+        unmatched.append(item)
+    return unmatched
 
 
 def _citations(rules: list[LibraryRule], retriever) -> dict:

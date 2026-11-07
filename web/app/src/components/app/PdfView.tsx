@@ -1,6 +1,6 @@
 // A PDF page with boxes drawn where the checked values are printed. Box coordinates are PDF
-// points from the bottom left, as the checker gives them. Zoom with the wheel or the buttons,
-// drag to move, and the page follows the selected finding.
+// points from the bottom left, as the checker gives them. The wheel scrolls down the document,
+// Ctrl + wheel or the buttons zoom, drag to move, and the page follows the selected finding.
 import { useEffect, useRef, useState } from "react";
 import type { Status } from "@/lib/types";
 
@@ -60,13 +60,32 @@ export function PdfView({ url, marks, selected, onSelect }: { url: string; marks
     const w = Math.min(W * 2, Math.max(W * 0.15, v.w * factor)), k = w / v.w;
     return { x: v.x + v.w / 2 - (v.w * k) / 2, y: v.y + v.h / 2 - (v.h * k) / 2, w, h: v.h * k };
   });
+  const pages = useRef({ page, pageCount });
+  pages.current = { page, pageCount };
+  const lastFlip = useRef(0);
   useEffect(() => {
     const element = svg.current;
     if (!element) return;
-    const wheel = (event: WheelEvent) => { event.preventDefault(); zoom(event.deltaY > 0 ? 1.15 : 1 / 1.15); };
+    // The wheel scrolls down the document and on to the next page at the edge; Ctrl + wheel (also a trackpad pinch) zooms.
+    const wheel = (event: WheelEvent) => {
+      event.preventDefault();
+      if (event.ctrlKey) { zoom(event.deltaY > 0 ? 1.15 : 1 / 1.15); return; }
+      const rect = element.getBoundingClientRect();
+      const down = event.deltaY > 0;
+      setView((v) => {
+        const maxY = Math.max(0, H - v.h), y = v.y + event.deltaY * Math.max(v.w / rect.width, v.h / rect.height);
+        const { page: current, pageCount: count } = pages.current;
+        const atEdge = down ? y >= maxY : y <= 0;
+        if (atEdge && Date.now() - lastFlip.current > 450) {
+          const next = current + (down ? 1 : -1);
+          if (next >= 1 && next <= count && Math.abs(event.deltaY) > 0) { lastFlip.current = Date.now(); setPage(next); }
+        }
+        return { ...v, y: Math.min(maxY, Math.max(0, y)) };
+      });
+    };
     element.addEventListener("wheel", wheel, { passive: false });
     return () => element.removeEventListener("wheel", wheel);
-  }, [W]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [W, H]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scale = () => { const r = svg.current?.getBoundingClientRect(); return r ? Math.max(view.w / r.width, view.h / r.height) : 1; };
   const onPage = marks.filter((m) => m.page === page);

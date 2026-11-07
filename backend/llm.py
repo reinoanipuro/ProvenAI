@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
-LLM_MODEL = os.environ.get("PROVENAI_LLM_MODEL", "ministral-3:8b")
+LLM_MODEL = os.environ.get("PROVENAI_LLM_MODEL", "ministral-3:3b")
 # A CPU-only laptop needs about a minute per call, so allow plenty of time.
 LLM_TIMEOUT_SECONDS = int(os.environ.get("PROVENAI_LLM_TIMEOUT", "600"))
 UNKNOWN_ATTRIBUTE = "unknown"

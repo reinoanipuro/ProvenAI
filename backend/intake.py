@@ -95,10 +95,11 @@ def find_items(documents: list[Document], llm, attributes: dict) -> tuple[list[d
 
     for item in items:
         value = _normalize(item["value_text"])
-        found = next(
-            ((line, filename, page) for line, filename, page in lines if value and _has_value(value, _normalize(line))),
-            None,
+        position, found = next(
+            ((index, entry) for index, entry in enumerate(lines) if value and _has_value(value, _normalize(entry[0]))),
+            (None, None),
         )
+        item["source_order"] = position
         item["source_line"] = found[0] if found else ""
         match = found[1:] if found else None
         item["source_file"], item["source_page"] = match if match else ("", None)
