@@ -16,7 +16,6 @@ function TopBar() {
       <nav className="flex gap-5 text-[13px] uppercase tracking-wide [font-family:var(--font-label)]">
         <Link to="/" className="hover:underline">New check</Link>
         <Link to="/history" className="hover:underline">Earlier checks</Link>
-        <Link to="/settings" className="hover:underline">Settings</Link>
       </nav>
     </div>
   </header>;

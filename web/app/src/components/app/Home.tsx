@@ -2,7 +2,7 @@
 // issue in red on it, with a summary and step-by-step next steps.
 import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { api, qk } from "@/lib/api";
 import { PageTitle } from "./AppShell";
 
@@ -80,6 +80,6 @@ function Connection({ running }: { running: boolean | undefined }) {
         <p className="flex items-center gap-2.5 font-semibold"><span className="status-dot" style={{ ["--dot" as string]: "var(--fail)" }} />The checker is not running.</p>
         <p className="mt-1">Start it in PowerShell, in the project folder:</p>
         <code className="sheet-mono mt-1 block bg-[var(--muted)] px-2 py-1 text-xs">powershell -ExecutionPolicy Bypass -File start.ps1</code>
-        <p className="mt-1 text-[var(--muted-foreground)]">This page notices by itself when it runs. Address: <Link className="underline" to="/settings">Settings</Link></p>
+        <p className="mt-1 text-[var(--muted-foreground)]">This page notices by itself when it runs.</p>
       </div>;
 }
