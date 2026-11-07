@@ -3,3 +3,6 @@ uvicorn
 streamlit
 requests
 pytest
+pypdf
+chromadb
+sentence-transformers

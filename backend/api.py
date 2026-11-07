@@ -1,9 +1,11 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from .pipeline import inspect_document
+from .rag import RegulatoryRetriever
 
 app = FastAPI(title="ProvenAI")
+retriever: RegulatoryRetriever | None = None
 
 
 class InspectionRequest(BaseModel):
@@ -13,6 +15,28 @@ class InspectionRequest(BaseModel):
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=2_000)
+    top_k: int = Field(default=5, ge=1, le=50)
+
+
+@app.post("/rag/search")
+def search_regulations(request: SearchRequest) -> dict:
+    global retriever
+    if retriever is None:
+        try:
+            retriever = RegulatoryRetriever()
+        except ValueError as error:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "The regulatory index is not ready. Put PDFs in "
+                    "data/regulations and run 'python rebuild_rag.py'."
+                ),
+            ) from error
+    return {"query": request.query, "results": retriever.search(request.query, request.top_k)}
 
 
 @app.post("/inspect")
