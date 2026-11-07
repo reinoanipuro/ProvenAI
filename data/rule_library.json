@@ -37,7 +37,7 @@
       "quantity": "length"
     },
     "high_forward_reach_height": {
-      "label": "height of a control or item reached forward from a wheelchair (high reach)",
+      "label": "mounting height of a control, switch, button, call button or outlet that must be reachable from a wheelchair (high forward reach)",
       "quantity": "length"
     },
     "superstructure_door_sill_height": {

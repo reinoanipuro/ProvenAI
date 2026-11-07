@@ -1,7 +1,5 @@
 fastapi
 uvicorn
-streamlit
-requests
 pytest
 pypdfium2
 chromadb

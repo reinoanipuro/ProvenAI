@@ -1,19 +1,31 @@
-import { useRouterState } from "@tanstack/react-router";
-import { CheckerHeader } from "./CheckerHeader";
 import { useEffect, type ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
 
-
-
-export function workspaceCommand(command: string) { window.dispatchEvent(new CustomEvent("checker-command", { detail: command })); }
 export function AppShell({ children }: { children: ReactNode }) {
-  const pathname = useRouterState({ select: state => state.location.pathname });
-  const workspace = pathname === "/" || /^\/inspections\/[^/]+$/.test(pathname) && pathname !== "/inspections/new";
   useEffect(() => { document.documentElement.classList.remove("dark"); }, []);
-  return <div className="checker-app">
-    {!workspace && <CheckerHeader title="PROVENAI"/>}
-    <main>{children}</main>
+  return <div className="min-h-screen">
+    <TopBar />
+    <main className="mx-auto w-full max-w-7xl px-4 py-5">{children}</main>
   </div>;
 }
-export function PageHeader({ title, sub, actions }: { title: ReactNode; sub?: ReactNode; actions?: ReactNode }) {
-  return <header className="document-header"><div><h1>{title}</h1>{sub && <p className="text-sm">{sub}</p>}</div>{actions && <div className="flex items-center gap-2 no-print">{actions}</div>}</header>;
+
+function TopBar() {
+  return <header className="sheet-noprint border-b border-[var(--foreground)] bg-[var(--card)]">
+    <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-2">
+      <Link to="/" className="flex items-center gap-2"><img src="/logo.png" alt="" className="h-7 w-7" /><span className="sheet-title text-[17px]">ProvenAI</span></Link>
+      <nav className="flex gap-5 text-[13px] uppercase tracking-wide [font-family:var(--font-label)]">
+        <Link to="/" className="hover:underline">New check</Link>
+        <Link to="/history" className="hover:underline">Earlier checks</Link>
+        <Link to="/settings" className="hover:underline">Settings</Link>
+      </nav>
+    </div>
+  </header>;
+}
+
+/** The ruled title of a page, as on a drawing sheet. */
+export function PageTitle({ label, title, children }: { label: string; title: ReactNode; children?: ReactNode }) {
+  return <header className="sheet-rule flex flex-wrap items-end justify-between gap-4 py-3">
+    <div className="min-w-0"><p className="sheet-label">{label}</p><h1 className="sheet-title break-words">{title}</h1></div>
+    {children}
+  </header>;
 }

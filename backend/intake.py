@@ -23,6 +23,11 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
+def _has_value(value: str, line: str) -> bool:
+    """The value as a whole number in the line: "8 mm" is not in "918 mm"."""
+    return re.search(rf"(?<![\d.,]){re.escape(value)}(?!\d)", line) is not None
+
+
 def read_files(files: list[tuple[str, bytes]], folder: Path) -> tuple[list[Document], list[str]]:
     documents: list[Document] = []
     warnings: list[str] = []
@@ -91,7 +96,7 @@ def find_items(documents: list[Document], llm, attributes: dict) -> tuple[list[d
     for item in items:
         value = _normalize(item["value_text"])
         found = next(
-            ((line, filename, page) for line, filename, page in lines if value and value in _normalize(line)),
+            ((line, filename, page) for line, filename, page in lines if value and _has_value(value, _normalize(line))),
             None,
         )
         item["source_line"] = found[0] if found else ""
@@ -101,13 +106,3 @@ def find_items(documents: list[Document], llm, attributes: dict) -> tuple[list[d
             f"{match[0]}, page {match[1]}" if match and match[1] else (match[0] if match else "")
         )
     return items, warnings
-
-
-def describe(document: Document) -> dict:
-    return {
-        "filename": document.filename,
-        "kind": document.kind,
-        "text_pages": len(document.pages),
-        "text_characters": document.text_characters,
-        "pictures": [{"page": picture.page, "status": picture.status} for picture in document.pictures],
-    }

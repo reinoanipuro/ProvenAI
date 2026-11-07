@@ -1,0 +1,6 @@
+# Never change line endings in binary files: a PDF with CRLF added has broken offsets.
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary

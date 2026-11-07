@@ -15,6 +15,8 @@ LLM_MODEL = os.environ.get("PROVENAI_LLM_MODEL", "ministral-3:8b")
 # A CPU-only laptop needs about a minute per call, so allow plenty of time.
 LLM_TIMEOUT_SECONDS = int(os.environ.get("PROVENAI_LLM_TIMEOUT", "600"))
 UNKNOWN_ATTRIBUTE = "unknown"
+# Loading the model takes 10 to 30 seconds on a laptop, so it stays in memory between checks.
+KEEP_ALIVE = os.environ.get("PROVENAI_KEEP_ALIVE", "30m")
 
 
 class LLMUnavailableError(RuntimeError):
@@ -31,10 +33,24 @@ class OllamaClient:
         self.url = url.rstrip("/")
         self.timeout = timeout
 
+    def load(self) -> None:
+        """Load the model into memory ahead of the first check; errors are ignored."""
+        request = urllib.request.Request(
+            f"{self.url}/api/generate",
+            data=json.dumps({"model": self.model, "keep_alive": KEEP_ALIVE}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                response.read()
+        except (urllib.error.URLError, TimeoutError, OSError):
+            pass
+
     def chat_json(self, system: str, user: str, schema: dict, max_tokens: int = 400) -> dict:
         body = {
             "model": self.model,
             "stream": False,
+            "keep_alive": KEEP_ALIVE,
             "format": schema,
             "options": {"temperature": 0, "num_ctx": 4096, "num_predict": max_tokens},
             "messages": [
@@ -186,7 +202,8 @@ def summarize(llm, facts: list[dict]) -> str:
         "Write 3 to 5 sentences of plain text with no Markdown, bullets or bold. Answer in "
         "JSON only."
     )
-    reply = llm.chat_json(system, json.dumps(facts, ensure_ascii=False), schema, max_tokens=300)
+    # Room for 5 sentences about many results; a cut-off answer is invalid JSON and falls back to the template.
+    reply = llm.chat_json(system, json.dumps(facts, ensure_ascii=False), schema, max_tokens=700)
     summary = str(reply.get("summary", ""))
     # Underscores are kept, because rule IDs such as CANDIDATE-sill_height contain them.
     return re.sub(r"\s+", " ", re.sub(r"[*#`]+", "", summary)).strip()

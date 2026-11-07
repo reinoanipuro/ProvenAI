@@ -1,19 +1,9 @@
 from pathlib import Path
 
-import pytest
-from fastapi.testclient import TestClient
-
-from backend import api, documents
 from backend.documents import measurement_lines, read_document
 
 SAMPLES = Path("data/samples/designs")
 REGULATIONS = Path("data/regulations")
-
-
-@pytest.fixture
-def upload_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(documents, "UPLOAD_DIR", tmp_path)
-    return tmp_path
 
 
 def test_text_file_values_keep_their_element_line(tmp_path):
@@ -38,15 +28,14 @@ def test_pdf_text_pages_are_read_with_page_numbers(tmp_path):
 
     assert document.kind == "pdf"
     assert document.pages and document.pages[0].number == 1
-    assert not document.pictures
+    assert not document.pages_without_text
 
 
-def test_pictures_are_stored_for_later_2d_reading(tmp_path):
-    document = read_document("deck plan.png", b"\x89PNG fake picture", tmp_path)
+def test_pictures_are_not_supported(tmp_path):
+    document = read_document("deck plan.png", b"PNG picture", tmp_path)
 
-    assert document.kind == "picture"
-    assert "2D reading" in document.pictures[0].status
-    assert (tmp_path / "deck_plan.png").exists()
+    assert document.kind == "unsupported" and not document.pages
+    assert "not supported" in document.warnings[0]
 
 
 def test_unsupported_and_unsafe_names_are_handled(tmp_path):
@@ -70,29 +59,19 @@ class FakeLLM:
         return {"items": []}
 
 
-def test_upload_returns_items_with_their_source(upload_dir, monkeypatch):
-    monkeypatch.setattr(api, "llm", FakeLLM())
-    client = TestClient(api.app)
-    files = [
-        ("files", ("deck5.txt", (SAMPLES / "deck5_accessibility.txt").read_bytes(), "text/plain")),
-        ("files", ("plan.png", b"\x89PNG fake picture", "image/png")),
-    ]
-    response = client.post("/upload", files=files)
-    body = response.json()
+def test_dropped_files_give_items_with_their_source(tmp_path):
+    from backend.intake import find_items, read_files
+    from backend.rules import load_library
 
-    assert response.status_code == 200
-    assert body["items"][0]["value_text"] == "800 mm"
-    assert body["items"][0]["source"] == "deck5.txt"
+    files = [("deck5.txt", (SAMPLES / "deck5_accessibility.txt").read_bytes()), ("plan.png", b"PNG picture")]
+    documents, warnings = read_files(files, tmp_path)
+    items, _ = find_items(documents, FakeLLM(), load_library()[0])
+
+    assert items[0]["value_text"] == "800 mm" and items[0]["source_file"] == "deck5.txt"
     # Mistral invented 750 mm: it is not in the document, so the value is dropped.
-    assert all(item["value_text"] != "750 mm" for item in body["items"])
-    assert body["documents"][1]["pictures"][0]["status"].startswith("waiting for 2D reading")
-
-
-def test_upload_rejects_too_many_files(upload_dir):
-    client = TestClient(api.app)
-    files = [("files", (f"f{number}.txt", b"x", "text/plain")) for number in range(11)]
-
-    assert client.post("/upload", files=files).status_code == 422
+    assert all(item["value_text"] != "750 mm" for item in items)
+    # A picture is not supported: it is reported, and the text file is still read.
+    assert any("plan.png: this file type is not supported" in warning for warning in warnings)
 
 
 def test_lines_that_name_their_element_stay_on_their_own(tmp_path):
@@ -134,3 +113,27 @@ def test_cut_off_answers_are_read_again_in_halves():
 
     assert [found[0]["value_text"] for _, found in parts] == ["800 mm", "850 mm", "1:10"]
     assert not warnings
+
+
+def test_a_value_is_found_only_as_a_whole_number():
+    from backend.intake import _has_value
+
+    assert not _has_value("8 mm", "clear opening: 918 mm")
+    assert _has_value("8 mm", "raised threshold 8 mm")
+    assert _has_value("1:12", "running slope 1:12")
+
+
+def test_pdf_pages_without_text_are_reported(tmp_path):
+    import io
+
+    import pypdfium2
+
+    pdf = pypdfium2.PdfDocument.new()
+    pdf.new_page(595, 842)  # A blank page, like a scan: no text layer.
+    data = io.BytesIO()
+    pdf.save(data)
+
+    document = read_document("scan.pdf", data.getvalue(), tmp_path)
+
+    assert document.pages == [] and document.pages_without_text == [1]
+    assert "page 1 has no text" in document.warnings[0]

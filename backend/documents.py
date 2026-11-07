@@ -1,9 +1,7 @@
-"""Read dropped design documents: text files, PDFs, Word files and 2D pictures.
+"""Read dropped design documents: text files, Word files and PDFs with a text layer.
 
-Text is extracted here. Pictures, and PDF pages without a text layer such as
-scanned drawings, are stored and listed as waiting for 2D reading, which is a
-later step: read_picture() is the place to add it. The local model
-(ministral-3:8b) supports images, so that step needs no new model.
+ProvenAI checks text documents. PDF pages without text, such as scans or
+drawings, are reported to the engineer and not read.
 """
 
 import io
@@ -17,11 +15,10 @@ from xml.etree import ElementTree
 ROOT = Path(__file__).resolve().parent.parent
 UPLOAD_DIR = ROOT / ".runtime" / "uploads"
 TEXT_TYPES = {".txt", ".md", ".csv"}
-PICTURE_TYPES = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
-SUPPORTED_TYPES = TEXT_TYPES | PICTURE_TYPES | {".pdf", ".docx"}
+SUPPORTED_TYPES = TEXT_TYPES | {".pdf", ".docx"}
 MAX_FILES = 10
 MAX_FILE_BYTES = 25 * 1024 * 1024
-# Fewer characters than this on a PDF page means it is a picture, such as a drawing.
+# Fewer characters than this on a PDF page means it has no text layer, such as a scan.
 MIN_PAGE_TEXT = 40
 # A label this short before a value, like "Clear width:", needs the line above for its element.
 SHORT_LABEL = 30
@@ -45,18 +42,11 @@ class Page:
 
 
 @dataclass
-class Picture:
-    page: int | None
-    stored_as: str
-    status: str = "waiting for 2D reading (not available yet)"
-
-
-@dataclass
 class Document:
     filename: str
     kind: str
     pages: list[Page] = field(default_factory=list)
-    pictures: list[Picture] = field(default_factory=list)
+    pages_without_text: list[int] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -90,15 +80,8 @@ def _docx_text(data: bytes) -> str:
     return "\n".join(paragraphs)
 
 
-def _store(folder: Path, name: str, data: bytes) -> str:
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / name).write_bytes(data)
-    # Stored as "<upload id>/<file name>" inside UPLOAD_DIR.
-    return f"{folder.name}/{name}"
-
-
 def read_document(filename: str, data: bytes, folder: Path) -> Document:
-    """Extract text from one file, and store pictures for later 2D reading."""
+    """Extract the text of one file."""
     name = safe_name(filename)
     suffix = Path(name).suffix.lower()
     if suffix not in SUPPORTED_TYPES:
@@ -119,11 +102,6 @@ def read_document(filename: str, data: bytes, folder: Path) -> Document:
             document.warnings.append(f"{name}: could not read this Word file.")
             return document
 
-    if suffix in PICTURE_TYPES:
-        document = Document(name, "picture")
-        document.pictures.append(Picture(None, _store(folder, name, data)))
-        return document
-
     return _read_pdf(name, data, folder)
 
 
@@ -137,7 +115,6 @@ def _read_pdf(name: str, data: bytes, folder: Path) -> Document:
         document.warnings.append(f"{name}: could not open this PDF.")
         return document
     try:
-        stored = None
         for index in range(len(pdf)):
             page = pdf[index]
             textpage = page.get_textpage()
@@ -147,21 +124,16 @@ def _read_pdf(name: str, data: bytes, folder: Path) -> Document:
             if len(text.strip()) >= MIN_PAGE_TEXT:
                 document.pages.append(Page(index + 1, text))
             else:
-                stored = stored or _store(folder, name, data)
-                document.pictures.append(Picture(index + 1, stored))
+                document.pages_without_text.append(index + 1)
     finally:
         pdf.close()
-    if document.pictures:
+    if document.pages_without_text:
+        listed = ", ".join(str(number) for number in document.pages_without_text)
         document.warnings.append(
-            f"{name}: {len(document.pictures)} page(s) have no text, such as drawings or scans. "
-            "They are stored for 2D reading, which is not available yet."
+            f"{name}: page {listed} has no text (a scan or a drawing), so it was not checked. "
+            "Export the document as a text PDF, Word or text file."
         )
     return document
-
-
-def read_picture(picture: Picture) -> str:
-    """The place for 2D reading of drawings and pictures. Not available yet."""
-    raise NotImplementedError("2D picture reading is a later step.")
 
 
 def measurement_lines(document: Document) -> list[tuple[str, int | None]]:
