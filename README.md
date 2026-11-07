@@ -81,11 +81,15 @@ needed.
    ```
 
 2. [Ollama](https://ollama.com) and the model, which runs on the CPU and needs
-   about 6 GB of memory:
+   about 3 GB of memory:
 
    ```powershell
-   ollama pull ministral-3:8b
+   ollama pull ministral-3:3b
    ```
+
+   To use another model, for example the larger `ministral-3:8b` (about 6 GB),
+   pull it and set `$env:PROVENAI_LLM_MODEL = "ministral-3:8b"` before
+   starting.
 
 3. The regulation index (see below). `start.ps1` uses `PROVENAI_INDEX_DIR` if it
    is set, otherwise `.runtime\chroma`.

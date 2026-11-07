@@ -33,7 +33,7 @@ if (-not (Test-Path $index)) {
 try { Invoke-RestMethod "http://localhost:11434/api/tags" -TimeoutSec 3 | Out-Null }
 catch {
     Write-Host "Starting Ollama ..."
-    try { Start-Process ollama -ArgumentList "serve" -WindowStyle Minimized } catch { Write-Host "Ollama is not installed. Install it from https://ollama.com and run: ollama pull ministral-3:8b" -ForegroundColor Red }
+    try { Start-Process ollama -ArgumentList "serve" -WindowStyle Minimized } catch { Write-Host "Ollama is not installed. Install it from https://ollama.com and run: ollama pull ministral-3:3b" -ForegroundColor Red }
 }
 
 # 4. The checker on port 8000.

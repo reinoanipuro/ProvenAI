@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Status } from "@/lib/types";
 
-export interface Mark { id: string; status: Status; page: number; bbox: [number, number, number, number] }
+export interface Mark { id: string; status: Status; page: number; bbox: [number, number, number, number]; label?: number | undefined }
 type View = { x: number; y: number; w: number; h: number };
 
 const COLOR: Record<Status, string> = { FAIL: "var(--fail)", UNKNOWN: "var(--unknown)", PASS: "var(--pass)" };
@@ -113,9 +113,20 @@ export function PdfView({ url, marks, selected, onSelect }: { url: string; marks
           {image && <image href={image.src} x={0} y={0} width={W} height={H} />}
           {onPage.map((mark) => {
             const [x0, y0, x1, y1] = mark.bbox, color = COLOR[mark.status], active = mark.id === selected;
-            return <rect key={mark.id} x={x0} y={H - y1} width={x1 - x0} height={y1 - y0} rx={3} fill={color} fillOpacity={active ? 0.18 : 0.1}
-              stroke={color} strokeWidth={active ? 4 : 2} vectorEffect="non-scaling-stroke" className="cursor-pointer"
-              onPointerDown={(e) => e.stopPropagation()} onClick={() => onSelect(mark.id)}><title>{mark.status === "FAIL" ? "Issue" : mark.status === "PASS" ? "OK" : "To check"}</title></rect>;
+            // The number badge keeps the same size on screen at every zoom.
+            const r = view.w * 0.012, pad = 2;
+            const box = { x: x0 - pad, y: H - y1 - pad, width: x1 - x0 + pad * 2, height: y1 - y0 + pad * 2 };
+            const select = () => onSelect(mark.id);
+            return <g key={mark.id} className="cursor-pointer" onPointerDown={(e) => e.stopPropagation()} onClick={select}>
+              <title>{`${mark.label ? `Step ${mark.label}: ` : ""}${mark.status === "FAIL" ? "Issue" : mark.status === "PASS" ? "OK" : "To check"}`}</title>
+              {active && <rect {...box} rx={3} stroke={color} vectorEffect="non-scaling-stroke" className="mark-halo" />}
+              <rect {...box} rx={3} fill={color} fillOpacity={active ? 0.2 : 0.1} stroke={color} strokeWidth={active ? 3 : 1.75}
+                strokeDasharray={mark.status === "UNKNOWN" ? "5 3" : undefined} vectorEffect="non-scaling-stroke" className="mark-box" />
+              {mark.label != null && <g transform={`translate(${Math.max(r, box.x - r * 0.6)} ${Math.max(r, box.y - r * 0.2)})`}>
+                <circle r={r} fill={color} stroke="var(--card)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+                <text textAnchor="middle" dominantBaseline="central" fontSize={r * 1.15} fontWeight={600} fill="var(--card)" style={{ fontFamily: "var(--font-mono)" }}>{mark.label}</text>
+              </g>}
+            </g>;
           })}
         </svg>}
   </div>;

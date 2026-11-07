@@ -93,3 +93,68 @@
   .report-side > * { margin-bottom: 12px; }
   .sheet-step, .sheet { break-inside: avoid; }
 }
+
+/* ---------- Polish: drafting paper, offset shadows, motion. Same colors and fonts. */
+body {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--foreground) 4%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--foreground) 4%, transparent) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+.sheet { box-shadow: 4px 4px 0 color-mix(in srgb, var(--foreground) 10%, transparent); }
+.sheet-button { transition: background-color 120ms, color 120ms, transform 120ms, box-shadow 120ms; }
+.sheet-button:not(:disabled):hover { transform: translate(-1px, -1px); box-shadow: 2px 2px 0 var(--foreground); }
+.sheet-button:not(:disabled):active { transform: none; box-shadow: none; }
+
+@keyframes sheet-reveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.sheet-reveal { animation: sheet-reveal 220ms ease-out both; }
+
+/* Verdict title block */
+.verdict-stat { display: flex; flex-direction: column; justify-content: center; min-width: 108px; padding: 10px 16px; border-left: 1px solid var(--foreground); }
+.verdict-stat:first-child { border-left: 0; }
+.verdict-stat strong { font: 600 34px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
+.verdict-stat[data-hot] { background: color-mix(in srgb, var(--stat) 8%, transparent); }
+.verdict-bar { display: flex; height: 6px; border-top: 1px solid var(--foreground); }
+.verdict-bar > span { transition: flex-grow 400ms ease-out; }
+
+/* Steps */
+.sheet-step { transition: background-color 120ms; }
+.sheet-step:not([data-open]):hover { background: color-mix(in srgb, var(--background) 55%, transparent); }
+.sheet-chip { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border: 1px solid var(--border); background: var(--card); font: 11.5px/18px var(--font-mono); white-space: nowrap; }
+.sheet-tag[data-solid] { background: var(--tag); border-color: var(--tag); color: var(--card); }
+
+/* Numbered marks on the document */
+@keyframes mark-pulse { from { stroke-opacity: .85; stroke-width: 3px; } to { stroke-opacity: 0; stroke-width: 18px; } }
+.mark-halo { fill: none; animation: mark-pulse 1.4s ease-out infinite; pointer-events: none; }
+.mark-box { transition: fill-opacity 150ms; }
+.mark-box:hover { fill-opacity: .22; }
+.doc-badge { display: inline-block; min-width: 20px; height: 18px; margin-right: 8px; padding: 0 4px; border-radius: 9px; background: var(--badge); color: var(--card); font: 600 11px/18px var(--font-mono); text-align: center; }
+
+/* Progress */
+@keyframes sheet-stripes { to { background-position: 28px 0; } }
+.sheet-progress { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.sheet-progress > span { height: 8px; border: 1px solid var(--foreground); }
+.sheet-progress > span[data-done] { background: var(--foreground); }
+.sheet-progress > span[data-current] { background: repeating-linear-gradient(-45deg, var(--foreground) 0 7px, transparent 7px 14px); background-size: 28px 100%; animation: sheet-stripes 700ms linear infinite; }
+
+/* Start page */
+.sheet-drop { position: relative; transition: background-color 120ms, transform 160ms, box-shadow 160ms; }
+.sheet-drop:not(:disabled):hover, .sheet-drop[data-over] { transform: translate(-2px, -2px); box-shadow: 6px 6px 0 color-mix(in srgb, var(--foreground) 14%, transparent); }
+.drop-corner { position: absolute; width: 18px; height: 18px; border-color: var(--foreground); border-style: solid; border-width: 0; }
+.drop-corner[data-c="tl"] { top: 10px; left: 10px; border-top-width: 2px; border-left-width: 2px; }
+.drop-corner[data-c="tr"] { top: 10px; right: 10px; border-top-width: 2px; border-right-width: 2px; }
+.drop-corner[data-c="bl"] { bottom: 10px; left: 10px; border-bottom-width: 2px; border-left-width: 2px; }
+.drop-corner[data-c="br"] { bottom: 10px; right: 10px; border-bottom-width: 2px; border-right-width: 2px; }
+.drop-icon { transition: transform 200ms; }
+.sheet-drop:hover .drop-icon, .sheet-drop[data-over] .drop-icon { transform: translateY(-4px); }
+@keyframes status-ping { from { transform: scale(1); opacity: .6; } to { transform: scale(2.6); opacity: 0; } }
+.status-dot { position: relative; display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--dot); }
+.status-dot[data-live]::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--dot); animation: status-ping 1.6s ease-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+@media print {
+  body { background-image: none; }
+  .sheet { box-shadow: none; }
+}

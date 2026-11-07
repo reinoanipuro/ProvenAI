@@ -60,6 +60,9 @@ export function ResultPage({ id }: { id: string }) {
 function Progress({ insp }: { insp: Inspection }) {
   return <section className="sheet mt-4">
     <div className="sheet-heading"><span>Checking · {insp.name}</span><span className="sheet-spinner" aria-hidden /></div>
+    <div className="sheet-progress px-4 pt-4" aria-hidden>
+      {STEPS.slice(1).map((label, index) => <span key={label} data-done={insp.progress.step > index + 1 || undefined} data-current={insp.progress.step === index + 1 || undefined} />)}
+    </div>
     <ol className="p-4 text-sm">
       {STEPS.slice(1).map((label, index) => {
         const step = index + 1, done = insp.progress.step > step, current = insp.progress.step === step;
@@ -107,6 +110,15 @@ function Report({ insp }: { insp: Inspection }) {
     return { ...g, status: mine.map(statusOfStep).sort((a, b) => RANK[a] - RANK[b])[0]! };
   }), [baseGroups, steps, doneSteps, fixSteps]); // eslint-disable-line react-hooks/exhaustive-deps
   const byResult = useMemo(() => new Map(groups.flatMap((g) => g.results.map((r) => [r.id, g] as const))), [groups]);
+  // Each mark on the document carries the number of its first step, so the list and the page match.
+  const markNumbers = useMemo(() => {
+    const numbers = new Map<string, number>();
+    for (const step of stepSections.flatMap((s) => s.steps)) for (const rid of step.result_ids) {
+      const g = byResult.get(rid);
+      if (g && !numbers.has(g.id)) numbers.set(g.id, position.get(step.number) ?? step.number);
+    }
+    return numbers;
+  }, [stepSections, byResult, position]);
   const fails = groups.filter((g) => g.status === "FAIL"), unknown = groups.filter((g) => g.status === "UNKNOWN"), passes = groups.filter((g) => g.status === "PASS");
   const settledByEngineer = stepsDone > 0 && !fails.length && !unknown.length && groups.some((g) => g.original !== "PASS");
   const allStepsDone = steps.length > 0 && stepsDone === steps.length;
@@ -158,14 +170,32 @@ function Report({ insp }: { insp: Inspection }) {
         {insp.duration_s != null && <tr><td className="pr-3 text-[var(--muted-foreground)]">CHECKED IN</td><td>{insp.duration_s} s</td></tr>}
         <tr><td className="pr-3 text-[var(--muted-foreground)]">DECIDED BY</td><td>Python rules · regulation quotes</td></tr>
       </tbody></table>
+      <button type="button" className="sheet-button sheet-noprint" onClick={() => window.print()}>Print report</button>
     </PageTitle></div>
 
-    <section className="sheet mt-4 flex flex-wrap items-center justify-between gap-3 px-4 py-3" style={{ borderLeft: `8px solid ${verdict.color}` }}>
-      <div><p className="sheet-title text-[22px]" style={{ color: verdict.color }}>{verdict.label}</p><p className="text-sm">{verdict.text}.</p></div>
-      <div className="sheet-mono flex gap-4 text-sm">
-        <span style={{ color: COLOR.FAIL }}>{fails.length} ISSUES</span><span style={{ color: COLOR.UNKNOWN }}>{unknown.length} TO CHECK</span><span style={{ color: COLOR.PASS }}>{passes.length} OK</span>
+    <section className="sheet sheet-reveal mt-4 overflow-hidden">
+      <div className="flex flex-wrap items-stretch">
+        <div className="flex min-w-[260px] flex-1 items-center gap-4 px-5 py-4" style={{ borderLeft: `10px solid ${verdict.color}` }}>
+          <VerdictIcon color={verdict.color} kind={fails.length ? "fail" : unknown.length || !groups.length ? "check" : "pass"} />
+          <div className="min-w-0">
+            <p className="sheet-label">Verdict</p>
+            <p className="sheet-title text-[28px]" style={{ color: verdict.color }}>{verdict.label}</p>
+            <p className="text-sm">{verdict.text}.</p>
+          </div>
+        </div>
+        <div className="flex border-t border-[var(--foreground)] sm:border-t-0 sm:border-l">
+          {([["FAIL", fails.length, "Issues"], ["UNKNOWN", unknown.length, "To check"], ["PASS", passes.length, "OK"]] as const).map(([status, count, label]) =>
+            <div key={status} className="verdict-stat" data-hot={(count > 0 && status !== "PASS") || undefined} style={{ ["--stat" as string]: COLOR[status] }}>
+              <strong style={{ color: count ? COLOR[status] : "var(--muted-foreground)" }}>{count}</strong>
+              <span className="sheet-label mt-1">{label}</span>
+            </div>)}
+        </div>
       </div>
-      <button type="button" className="sheet-button sheet-noprint" onClick={() => window.print()}>Print report</button>
+      {groups.length > 0 && <div className="verdict-bar" title={`${fails.length} issues · ${unknown.length} to check · ${passes.length} OK`}>
+        <span style={{ flexGrow: fails.length, background: COLOR.FAIL }} />
+        <span style={{ flexGrow: unknown.length, background: COLOR.UNKNOWN }} />
+        <span style={{ flexGrow: passes.length, background: COLOR.PASS }} />
+      </div>}
     </section>
 
     <Summary insp={insp} />
@@ -185,8 +215,8 @@ function Report({ insp }: { insp: Inspection }) {
           <span style={{ color: COLOR.FAIL }}>■ issue</span> &nbsp; <span style={{ color: COLOR.UNKNOWN }}>■ to check</span>{showOk && <> &nbsp; <span style={{ color: COLOR.PASS }}>■ OK</span></>} &nbsp;· Click a mark to see why.
         </p>
         {!file ? <p className="p-4 text-sm">No file to show.</p>
-          : TEXT.test(file.name) ? <TextDocument insp={insp} file={file} groups={marked} selected={selected} onSelect={selectFromDocument} />
-          : <PdfDocument insp={insp} file={file} groups={marked} selected={selected} onSelect={selectFromDocument} />}
+          : TEXT.test(file.name) ? <TextDocument insp={insp} file={file} groups={marked} numbers={markNumbers} selected={selected} onSelect={selectFromDocument} />
+          : <PdfDocument insp={insp} file={file} groups={marked} numbers={markNumbers} selected={selected} onSelect={selectFromDocument} />}
       </section>
 
       <div className="report-side flex flex-col gap-4 lg:max-h-[78vh] lg:overflow-y-auto">
@@ -230,7 +260,10 @@ function Summary({ insp }: { insp: Inspection }) {
         {ai ? "Written by Mistral (local) · every number checked by Python" : insp.refining ? <><span className="sheet-spinner" />Mistral is writing the AI summary …</> : "Written by Python from the results"}
       </span>
     </div>
-    <p className="px-4 py-3 text-[15px] leading-relaxed">{summary?.text ?? "No summary."}</p>
+    <div key={summary?.source ?? "none"} className="sheet-reveal flex gap-3 px-4 py-3">
+      <span aria-hidden className="sheet-title -mt-1 text-[40px] leading-none text-[var(--muted-foreground)] opacity-40">“</span>
+      <p className="text-[15px] leading-relaxed">{summary?.text ?? "No summary."}</p>
+    </div>
     {summary?.note && <p className="border-t border-[var(--border)] px-4 py-2 text-xs text-[var(--muted-foreground)]">{summary.note}</p>}
   </section>;
 }
@@ -267,9 +300,15 @@ function StepItem({ step, position, kind: kindName, open, onToggle, groups, onSh
   return <li id={`step-${step.number}`} className="sheet-step scroll-mt-2" data-open={open || undefined} data-done={done || undefined} style={{ ["--step-color" as string]: kind.color }}>
     <div className="sheet-step-row">
       <button type="button" className="sheet-step-number" aria-pressed={done} onClick={onDone}
+        style={done ? undefined : { borderColor: kind.color, color: kind.color }}
         title={done ? "Done. Click to mark as not done" : "Click to mark this step as done"} aria-label={`Step ${position}: ${done ? "done" : "not done"}`}>{done ? "✓" : position}</button>
       <button type="button" onClick={onToggle} aria-expanded={open}>
-        <span className="min-w-0 flex-1"><span className="sheet-tag" style={{ color: kind.color }}>{kind.label}</span><span className="sheet-step-title mt-1 block font-semibold">{step.title}</span></span>
+        <span className="min-w-0 flex-1">
+          <span className="sheet-tag" data-solid={kindName === "fix" || undefined} style={kindName === "fix" ? { ["--tag" as string]: kind.color } : { color: kind.color }}>{kind.label}</span>
+          <span className="sheet-step-title mt-1 block font-semibold">{step.title}</span>
+          <StepChips group={groups[0]} source={step.source} />
+        </span>
+        <span aria-hidden className="mt-0.5 shrink-0 text-xs text-[var(--muted-foreground)] transition-transform duration-200" style={{ transform: open ? "rotate(90deg)" : undefined }}>▶</span>
       </button>
     </div>
     {!open && !done && <div className="print-only px-3 pb-3 pl-[44px] text-sm">
@@ -277,7 +316,7 @@ function StepItem({ step, position, kind: kindName, open, onToggle, groups, onSh
       {groups[0]?.main.evidence[0]?.quote && <p className="sheet-mono text-xs">In your document: “{groups[0].main.evidence[0].quote}”</p>}
       {groups[0]?.main.sources?.[0]?.filename && <p className="text-xs">Regulation: {groups[0].main.sources[0].filename}, page {groups[0].main.sources[0].page}</p>}
     </div>}
-    {open && <div className="space-y-3 px-3 pb-4 pl-[44px] text-sm">
+    {open && <div className="sheet-reveal space-y-3 px-3 pb-4 pl-[44px] text-sm">
       <p>{step.detail}</p>
       <div className="sheet-noprint flex flex-wrap gap-2">
         <button type="button" className="sheet-button h-7 px-2 text-xs" onClick={onDone}>{done ? "Mark as not done" : "Mark as done (OK)"}</button>
@@ -287,6 +326,35 @@ function StepItem({ step, position, kind: kindName, open, onToggle, groups, onSh
       {!groups.length && step.source?.filename && step.source.page != null && <RegulationPage source={step.source} />}
     </div>}
   </li>;
+}
+
+/** The value against its limit and the regulation, readable without opening the step. */
+function StepChips({ group, source }: { group: Group | undefined; source: RegulationSource | null | undefined }) {
+  const r = group?.main, regulation = r?.sources?.[0] ?? source ?? undefined;
+  const file = regulation?.filename?.replace(/\.pdf$/i, "");
+  // A manual-review result names the closest passage instead of a clause; show it as such.
+  const closest = regulation?.closest || r?.clause_ref.startsWith("Closest");
+  const clause = closest ? file && `closest: ${file}` : r?.clause_ref.split(" · ")[0] || file;
+  const value = group && measuredText(group) !== "not stated";
+  if (!value && !clause) return null;
+  return <span className="mt-1.5 flex flex-wrap gap-1.5">
+    {r && group && value && <span className="sheet-chip">
+      <strong style={{ color: COLOR[group.status] }}>{measuredText(group)}</strong>
+      {r.required && <span className="text-[var(--muted-foreground)]">→ {r.required} {r.unit}</span>}
+    </span>}
+    {clause && <span className="sheet-chip min-w-0 max-w-full text-[var(--muted-foreground)]" title={regulation?.filename}>
+      <span className="truncate">§ {clause}</span>{regulation?.page != null && <span className="shrink-0">· p. {regulation.page}</span>}
+    </span>}
+  </span>;
+}
+
+function VerdictIcon({ color, kind }: { color: string; kind: "fail" | "check" | "pass" }) {
+  return <svg width="52" height="52" viewBox="0 0 52 52" aria-hidden className="shrink-0">
+    <circle cx="26" cy="26" r="23" fill="none" stroke={color} strokeWidth="3" />
+    {kind === "pass" && <path d="M15 27l7 7 15-16" fill="none" stroke={color} strokeWidth="4" strokeLinecap="square" />}
+    {kind === "fail" && <path d="M17 17l18 18M35 17L17 35" stroke={color} strokeWidth="4" />}
+    {kind === "check" && <><path d="M26 13v17" stroke={color} strokeWidth="4" /><rect x="24" y="35" width="4" height="4" fill={color} /></>}
+  </svg>;
 }
 
 function Evidence({ group, onShow }: { group: Group; onShow: (g: Group) => void }) {
@@ -327,10 +395,10 @@ function RegulationPage({ source }: { source: RegulationSource }) {
   </div>;
 }
 
-function PdfDocument({ insp, file, groups, selected, onSelect }: { insp: Inspection; file: InspectionFile; groups: Group[]; selected: string | null; onSelect: (g: Group) => void }) {
+function PdfDocument({ insp, file, groups, numbers, selected, onSelect }: { insp: Inspection; file: InspectionFile; groups: Group[]; numbers: Map<string, number>; selected: string | null; onSelect: (g: Group) => void }) {
   // Marks only for values found in this file, at a known place.
   const placed = (e: ShipElement | undefined): e is ShipElement => !!e && e.bbox.some((v) => v !== 0) && Object.values(e.attrs).some((a) => a.source_file === file.name);
-  const marks: Mark[] = groups.flatMap((g) => placed(g.element) ? [{ id: g.id, status: g.status, page: g.element.page, bbox: g.element.bbox }] : []);
+  const marks: Mark[] = groups.flatMap((g) => placed(g.element) ? [{ id: g.id, status: g.status, page: g.element.page, bbox: g.element.bbox, label: numbers.get(g.id) }] : []);
   const missing = groups.filter((g) => g.status === "FAIL" && fileOf(g) === file.name && !placed(g.element)).length;
   return <>
     {missing > 0 && <p className="border-b border-[var(--border)] px-3 py-1 text-xs text-[var(--fail)]">{missing} issue{missing > 1 ? "s" : ""} could not be placed on the page; see the steps.</p>}
@@ -338,7 +406,7 @@ function PdfDocument({ insp, file, groups, selected, onSelect }: { insp: Inspect
   </>;
 }
 
-function TextDocument({ insp, file, groups, selected, onSelect }: { insp: Inspection; file: InspectionFile; groups: Group[]; selected: string | null; onSelect: (g: Group) => void }) {
+function TextDocument({ insp, file, groups, numbers, selected, onSelect }: { insp: Inspection; file: InspectionFile; groups: Group[]; numbers: Map<string, number>; selected: string | null; onSelect: (g: Group) => void }) {
   const { data, error } = useQuery({ queryKey: ["file-text", insp.id, file.id, ...qk.all()], queryFn: () => api.fileText(insp.id, file.id) });
   const selectedLine = useRef<HTMLSpanElement>(null);
   useEffect(() => { selectedLine.current?.scrollIntoView({ block: "center", behavior: "smooth" }); }, [selected, data]);
@@ -356,7 +424,8 @@ function TextDocument({ insp, file, groups, selected, onSelect }: { insp: Inspec
       {page.text.split("\n").map((line, lineIndex) => {
         const g = findFor(line), isSelected = !!g && g.id === selected;
         return <span key={lineIndex} ref={isSelected ? selectedLine : undefined} className="sheet-doc-line" data-status={g?.status} data-selected={isSelected || undefined}
-          onClick={g ? () => onSelect(g) : undefined} title={g ? `${g.main.check_name}: ${g.status === "FAIL" ? "not met" : g.status === "PASS" ? "met" : "to check"}` : undefined}>{line || " "}</span>;
+          onClick={g ? () => onSelect(g) : undefined} title={g ? `${g.main.check_name}: ${g.status === "FAIL" ? "not met" : g.status === "PASS" ? "met" : "to check"}` : undefined}>
+          {g && numbers.has(g.id) && <span className="doc-badge" style={{ ["--badge" as string]: COLOR[g.status] }}>{numbers.get(g.id)}</span>}{line || " "}</span>;
       })}
     </div>)}
   </div>;
