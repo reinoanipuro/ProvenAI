@@ -26,12 +26,30 @@ _UNIT_ALIASES = {
     "°": "degrees", "deg": "degrees", "degree": "degrees", "degrees": "degrees",
 }
 _RATIO = re.compile(r"(?P<rise>\d+(?:[.,]\d+)?)\s*:\s*(?P<run>\d+(?:[.,]\d+)?)")
+_SPACES = "    "
+# A number as engineers write it: 1,200 and 1 200 (thousands), 12,5 and 12.5 (decimals), or plain 1200.
+_NUMBER_TEXT = rf"(?:\d{{1,3}}(?:,\d{{3}})+(?:\.\d+)?|\d{{1,3}}(?:[{_SPACES}]\d{{3}})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?)"
+_LABEL_BEFORE_NUMBER = re.compile(r"\b(?:deck|frame|fr|room|cabin|door|ramp|stair|no|nr|id|level|zone|bay|section|p|pt)\.?\s*$", re.IGNORECASE)
 _NUMBER_WITH_UNIT = re.compile(
-    r"(?P<value>-?\d+(?:[.,]\d+)?)\s*(?P<unit>per cent|percent|millimet(?:re|er)s?|centimet(?:re|er)s?|"
+    rf"(?P<value>-?{_NUMBER_TEXT})\s*(?P<unit>per cent|percent|millimet(?:re|er)s?|centimet(?:re|er)s?|"
     r"met(?:re|er)s?|inch(?:es)?|feet|foot|degrees?|deg|mm|cm|in|ft|m|%|°|\"|')?",
     re.IGNORECASE,
 )
 _RELATIVE_TOLERANCE = 1e-9
+
+
+def _number(match: re.Match, text: str, unit: str | None) -> float:
+    """The value of a matched number: '1 200' and '1,200' are twelve hundred, '12,5' is twelve and a half."""
+    raw = match["value"]
+    groups = re.split(f"[{_SPACES}]", raw.lstrip("-"))
+    # "Deck 5 800 mm" is deck 5 and 800 mm, not 5 800 mm.
+    if len(groups) > 1 and _LABEL_BEFORE_NUMBER.search(text[: match.start("value")]):
+        raw = groups[-1]
+    sign = -1.0 if raw.startswith("-") else 1.0
+    raw = re.sub(f"[{_SPACES}]", "", raw.lstrip("-"))
+    if re.fullmatch(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", raw) and unit != "m":
+        return sign * float(raw.replace(",", ""))
+    return sign * float(raw.replace(",", "."))
 
 
 @dataclass(frozen=True)
@@ -112,8 +130,8 @@ def parse_measurement(text: str, quantity: str) -> Measurement | None:
 
     # Take the first number that has a fitting unit, so "deck 5, 800 mm" reads 800 mm.
     for match in _NUMBER_WITH_UNIT.finditer(text):
-        value = float(match["value"].replace(",", "."))
         unit = _UNIT_ALIASES.get((match["unit"] or "").lower())
+        value = _number(match, text, unit)
         if quantity == "length" and unit in LENGTH_TO_MM:
             return Measurement(value * LENGTH_TO_MM[unit], "mm", unit, text)
         if quantity == "slope" and unit == "percent":
@@ -148,7 +166,7 @@ def parse_limits(text: str, quantity: str) -> tuple[Limit, ...]:
                 limits.append(Limit(float(ratio["rise"].replace(",", ".")) / run, "ratio"))
     for match in _NUMBER_WITH_UNIT.finditer(text):
         unit = _UNIT_ALIASES.get((match["unit"] or "").lower())
-        value = float(match["value"].replace(",", "."))
+        value = _number(match, text, unit)
         if quantity == "length" and unit in LENGTH_TO_MM:
             limits.append(Limit(value, unit))
         elif quantity == "slope" and unit == "percent":
