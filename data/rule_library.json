@@ -1,0 +1,139 @@
+{
+  "attributes": {
+    "walking_route_clear_width": {"label": "clear width of a walking route or corridor", "quantity": "length"},
+    "door_clear_width": {"label": "clear width of a door opening", "quantity": "length"},
+    "ramp_running_slope": {"label": "running slope of a ramp", "quantity": "slope"},
+    "handrail_height": {"label": "height of the top of a handrail above the walking surface", "quantity": "length"},
+    "ballast_water_exchange_efficiency": {"label": "volumetric efficiency of ballast water exchange", "quantity": "percentage"}
+  },
+  "rules": [
+    {
+      "id": "ADA-403.5.1",
+      "title": "Clear width of walking surfaces",
+      "attribute": "walking_route_clear_width",
+      "min": [{"value": 915, "unit": "mm"}, {"value": 36, "unit": "in"}],
+      "required_text": "36 inches (915 mm) minimum",
+      "exceptions": "May be reduced to 32 inches (815 mm) minimum for a length of 24 inches (610 mm) maximum, and 403.5.2 and 403.5.3 also apply.",
+      "source": {
+        "filename": "ADA_2010_Standards_for_Accessible_Design.pdf",
+        "page": 121,
+        "section": "403.5.1 Clear Width",
+        "quote": "the clear width of walking surfaces shall be 36 inches (915 mm) minimum."
+      }
+    },
+    {
+      "id": "PVAG-V403.5.1",
+      "title": "Clear width of walking surfaces on passenger vessels",
+      "attribute": "walking_route_clear_width",
+      "min": [{"value": 915, "unit": "mm"}, {"value": 36, "unit": "in"}],
+      "required_text": "36 inches (915 mm) minimum",
+      "exceptions": "May be reduced to 32 inches (815 mm) minimum for a length of 24 inches (610 mm) maximum, and V403.5.2 and V403.5.3 also apply.",
+      "source": {
+        "filename": "ATBCB-2013-0003-0007_content.pdf",
+        "page": 123,
+        "section": "V403.5.1 Clear Width",
+        "quote": "the clear width of walking surfaces shall be 36 inches (915 mm) minimum."
+      }
+    },
+    {
+      "id": "ADA-404.2.3",
+      "title": "Clear width of door openings",
+      "attribute": "door_clear_width",
+      "min": [{"value": 815, "unit": "mm"}, {"value": 32, "unit": "in"}],
+      "required_text": "32 inches (815 mm) minimum",
+      "exceptions": "Openings more than 24 inches (610 mm) deep need 36 inches (915 mm) minimum. Measure swinging doors between the door face and the stop with the door open 90 degrees.",
+      "source": {
+        "filename": "ADA_2010_Standards_for_Accessible_Design.pdf",
+        "page": 123,
+        "section": "404.2.3 Clear Width",
+        "quote": "Door openings shall provide a clear width of 32 inches (815 mm) minimum."
+      }
+    },
+    {
+      "id": "PVAG-V404.2.3",
+      "title": "Clear width of door openings on passenger vessels",
+      "attribute": "door_clear_width",
+      "min": [{"value": 815, "unit": "mm"}, {"value": 32, "unit": "in"}],
+      "required_text": "32 inches (815 mm) minimum",
+      "exceptions": "Openings more than 24 inches (610 mm) deep need 36 inches (915 mm) minimum. Measure swinging doors between the door face and the stop with the door open 90 degrees.",
+      "source": {
+        "filename": "ATBCB-2013-0003-0007_content.pdf",
+        "page": 126,
+        "section": "V404.2.3 Clear Width",
+        "quote": "Door openings shall provide a clear width of 32 inches (815 mm) minimum."
+      }
+    },
+    {
+      "id": "ADA-405.2",
+      "title": "Running slope of ramps",
+      "attribute": "ramp_running_slope",
+      "max": [{"value": 0.0833333333, "unit": "ratio"}],
+      "required_text": "not steeper than 1:12",
+      "exceptions": "Existing sites, buildings and facilities may use the steeper slopes in Table 405.2 where space is limited.",
+      "source": {
+        "filename": "ADA_2010_Standards_for_Accessible_Design.pdf",
+        "page": 131,
+        "section": "405.2 Slope",
+        "quote": "Ramp runs shall have a running slope not steeper than 1:12."
+      }
+    },
+    {
+      "id": "PVAG-V405.2",
+      "title": "Running slope of ramps on passenger vessels",
+      "attribute": "ramp_running_slope",
+      "max": [{"value": 0.0833333333, "unit": "ratio"}],
+      "required_text": "not steeper than 1:12",
+      "exceptions": "Alterations may use Table V405.2 where space is limited. A slope steeper than 1:8 is prohibited.",
+      "source": {
+        "filename": "ATBCB-2013-0003-0007_content.pdf",
+        "page": 138,
+        "section": "V405.2 Slope",
+        "quote": "Ramp runs shall have a running slope not steeper than 1:12."
+      }
+    },
+    {
+      "id": "ADA-505.4",
+      "title": "Handrail height",
+      "attribute": "handrail_height",
+      "min": [{"value": 865, "unit": "mm"}, {"value": 34, "unit": "in"}],
+      "max": [{"value": 965, "unit": "mm"}, {"value": 38, "unit": "in"}],
+      "required_text": "34 inches (865 mm) minimum and 38 inches (965 mm) maximum",
+      "exceptions": "Handrails must also be at a consistent height above walking surfaces, stair nosings and ramp surfaces.",
+      "source": {
+        "filename": "ADA_2010_Standards_for_Accessible_Design.pdf",
+        "page": 158,
+        "section": "505.4 Height",
+        "quote": "Top of gripping surfaces of handrails shall be 34 inches (865 mm) minimum and 38 inches (965 mm) maximum"
+      }
+    },
+    {
+      "id": "PVAG-V503.4",
+      "title": "Handrail height on passenger vessels",
+      "attribute": "handrail_height",
+      "min": [{"value": 865, "unit": "mm"}, {"value": 34, "unit": "in"}],
+      "max": [{"value": 965, "unit": "mm"}, {"value": 38, "unit": "in"}],
+      "required_text": "34 inches (865 mm) minimum and 38 inches (965 mm) maximum",
+      "exceptions": "Applies above walking surfaces, stair nosings, gangway surfaces and ramp surfaces. Check the exceptions in V503.4.",
+      "source": {
+        "filename": "ATBCB-2013-0003-0007_content.pdf",
+        "page": 160,
+        "section": "V503.4 Height",
+        "quote": "Top of gripping surfaces of handrails shall be 34 inches (865 mm) minimum and 38 inches (965 mm) maximum"
+      }
+    },
+    {
+      "id": "BWM-D-1",
+      "title": "Ballast water exchange efficiency",
+      "attribute": "ballast_water_exchange_efficiency",
+      "min": [{"value": 95, "unit": "percent"}],
+      "required_text": "at least 95 percent volumetric exchange",
+      "exceptions": "Pumping through three times the volume of each ballast tank is considered to meet the standard.",
+      "source": {
+        "filename": "MS_6.2021_Convention_Ships_Ballast_Water_Sediment_2004.pdf",
+        "page": 27,
+        "section": "Regulation D-1",
+        "quote": "shall do so with an efficiency of at least 95 percent volumetric exchange of ballast water."
+      }
+    }
+  ]
+}
