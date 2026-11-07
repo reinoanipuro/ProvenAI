@@ -1,17 +1,69 @@
 {
   "attributes": {
-    "walking_route_clear_width": {"label": "clear width of a walking route or corridor", "quantity": "length"},
-    "door_clear_width": {"label": "clear width of a door opening", "quantity": "length"},
-    "ramp_running_slope": {"label": "running slope of a ramp", "quantity": "slope"},
-    "handrail_height": {"label": "height of the top of a handrail above the walking surface", "quantity": "length"},
-    "ballast_water_exchange_efficiency": {"label": "volumetric efficiency of ballast water exchange", "quantity": "percentage"}
+    "walking_route_clear_width": {
+      "label": "clear width of a walking route or corridor",
+      "quantity": "length"
+    },
+    "door_clear_width": {
+      "label": "clear width of a door opening",
+      "quantity": "length"
+    },
+    "ramp_running_slope": {
+      "label": "running slope of a ramp",
+      "quantity": "slope"
+    },
+    "handrail_height": {
+      "label": "height of the top of a handrail above the walking surface",
+      "quantity": "length"
+    },
+    "ballast_water_exchange_efficiency": {
+      "label": "volumetric efficiency of ballast water exchange",
+      "quantity": "percentage"
+    },
+    "turning_space_diameter": {
+      "label": "diameter of a wheelchair turning space",
+      "quantity": "length"
+    },
+    "door_threshold_height": {
+      "label": "height of a threshold at a doorway",
+      "quantity": "length"
+    },
+    "toilet_seat_height": {
+      "label": "height of a toilet or water closet seat above the floor",
+      "quantity": "length"
+    },
+    "table_counter_height": {
+      "label": "height of the top of a table, counter, dining or work surface",
+      "quantity": "length"
+    },
+    "high_forward_reach_height": {
+      "label": "height of a control or item reached forward from a wheelchair (high reach)",
+      "quantity": "length"
+    },
+    "superstructure_door_sill_height": {
+      "label": "sill height of an access opening in an end bulkhead of an enclosed superstructure",
+      "quantity": "length"
+    },
+    "guard_rail_height": {
+      "label": "height of bulwarks or guard rails on exposed decks",
+      "quantity": "length"
+    }
   },
   "rules": [
     {
       "id": "ADA-403.5.1",
       "title": "Clear width of walking surfaces",
       "attribute": "walking_route_clear_width",
-      "min": [{"value": 915, "unit": "mm"}, {"value": 36, "unit": "in"}],
+      "min": [
+        {
+          "value": 915,
+          "unit": "mm"
+        },
+        {
+          "value": 36,
+          "unit": "in"
+        }
+      ],
       "required_text": "36 inches (915 mm) minimum",
       "exceptions": "May be reduced to 32 inches (815 mm) minimum for a length of 24 inches (610 mm) maximum, and 403.5.2 and 403.5.3 also apply.",
       "source": {
@@ -25,7 +77,16 @@
       "id": "PVAG-V403.5.1",
       "title": "Clear width of walking surfaces on passenger vessels",
       "attribute": "walking_route_clear_width",
-      "min": [{"value": 915, "unit": "mm"}, {"value": 36, "unit": "in"}],
+      "min": [
+        {
+          "value": 915,
+          "unit": "mm"
+        },
+        {
+          "value": 36,
+          "unit": "in"
+        }
+      ],
       "required_text": "36 inches (915 mm) minimum",
       "exceptions": "May be reduced to 32 inches (815 mm) minimum for a length of 24 inches (610 mm) maximum, and V403.5.2 and V403.5.3 also apply.",
       "source": {
@@ -39,7 +100,16 @@
       "id": "ADA-404.2.3",
       "title": "Clear width of door openings",
       "attribute": "door_clear_width",
-      "min": [{"value": 815, "unit": "mm"}, {"value": 32, "unit": "in"}],
+      "min": [
+        {
+          "value": 815,
+          "unit": "mm"
+        },
+        {
+          "value": 32,
+          "unit": "in"
+        }
+      ],
       "required_text": "32 inches (815 mm) minimum",
       "exceptions": "Openings more than 24 inches (610 mm) deep need 36 inches (915 mm) minimum. Measure swinging doors between the door face and the stop with the door open 90 degrees.",
       "source": {
@@ -53,7 +123,16 @@
       "id": "PVAG-V404.2.3",
       "title": "Clear width of door openings on passenger vessels",
       "attribute": "door_clear_width",
-      "min": [{"value": 815, "unit": "mm"}, {"value": 32, "unit": "in"}],
+      "min": [
+        {
+          "value": 815,
+          "unit": "mm"
+        },
+        {
+          "value": 32,
+          "unit": "in"
+        }
+      ],
       "required_text": "32 inches (815 mm) minimum",
       "exceptions": "Openings more than 24 inches (610 mm) deep need 36 inches (915 mm) minimum. Measure swinging doors between the door face and the stop with the door open 90 degrees.",
       "source": {
@@ -67,7 +146,12 @@
       "id": "ADA-405.2",
       "title": "Running slope of ramps",
       "attribute": "ramp_running_slope",
-      "max": [{"value": 0.0833333333, "unit": "ratio"}],
+      "max": [
+        {
+          "value": 0.0833333333,
+          "unit": "ratio"
+        }
+      ],
       "required_text": "not steeper than 1:12",
       "exceptions": "Existing sites, buildings and facilities may use the steeper slopes in Table 405.2 where space is limited.",
       "source": {
@@ -81,7 +165,12 @@
       "id": "PVAG-V405.2",
       "title": "Running slope of ramps on passenger vessels",
       "attribute": "ramp_running_slope",
-      "max": [{"value": 0.0833333333, "unit": "ratio"}],
+      "max": [
+        {
+          "value": 0.0833333333,
+          "unit": "ratio"
+        }
+      ],
       "required_text": "not steeper than 1:12",
       "exceptions": "Alterations may use Table V405.2 where space is limited. A slope steeper than 1:8 is prohibited.",
       "source": {
@@ -95,8 +184,26 @@
       "id": "ADA-505.4",
       "title": "Handrail height",
       "attribute": "handrail_height",
-      "min": [{"value": 865, "unit": "mm"}, {"value": 34, "unit": "in"}],
-      "max": [{"value": 965, "unit": "mm"}, {"value": 38, "unit": "in"}],
+      "min": [
+        {
+          "value": 865,
+          "unit": "mm"
+        },
+        {
+          "value": 34,
+          "unit": "in"
+        }
+      ],
+      "max": [
+        {
+          "value": 965,
+          "unit": "mm"
+        },
+        {
+          "value": 38,
+          "unit": "in"
+        }
+      ],
       "required_text": "34 inches (865 mm) minimum and 38 inches (965 mm) maximum",
       "exceptions": "Handrails must also be at a consistent height above walking surfaces, stair nosings and ramp surfaces.",
       "source": {
@@ -110,8 +217,26 @@
       "id": "PVAG-V503.4",
       "title": "Handrail height on passenger vessels",
       "attribute": "handrail_height",
-      "min": [{"value": 865, "unit": "mm"}, {"value": 34, "unit": "in"}],
-      "max": [{"value": 965, "unit": "mm"}, {"value": 38, "unit": "in"}],
+      "min": [
+        {
+          "value": 865,
+          "unit": "mm"
+        },
+        {
+          "value": 34,
+          "unit": "in"
+        }
+      ],
+      "max": [
+        {
+          "value": 965,
+          "unit": "mm"
+        },
+        {
+          "value": 38,
+          "unit": "in"
+        }
+      ],
       "required_text": "34 inches (865 mm) minimum and 38 inches (965 mm) maximum",
       "exceptions": "Applies above walking surfaces, stair nosings, gangway surfaces and ramp surfaces. Check the exceptions in V503.4.",
       "source": {
@@ -125,7 +250,12 @@
       "id": "BWM-D-1",
       "title": "Ballast water exchange efficiency",
       "attribute": "ballast_water_exchange_efficiency",
-      "min": [{"value": 95, "unit": "percent"}],
+      "min": [
+        {
+          "value": 95,
+          "unit": "percent"
+        }
+      ],
       "required_text": "at least 95 percent volumetric exchange",
       "exceptions": "Pumping through three times the volume of each ballast tank is considered to meet the standard.",
       "source": {
@@ -133,6 +263,291 @@
         "page": 27,
         "section": "Regulation D-1",
         "quote": "shall do so with an efficiency of at least 95 percent volumetric exchange of ballast water."
+      }
+    },
+    {
+      "id": "ADA-304.3.1",
+      "title": "Circular turning space",
+      "attribute": "turning_space_diameter",
+      "min": [
+        {
+          "value": 1525,
+          "unit": "mm"
+        },
+        {
+          "value": 60,
+          "unit": "in"
+        }
+      ],
+      "required_text": "60 inches (1525 mm) diameter minimum",
+      "exceptions": "A T-shaped space complying with 304.3.2 is also allowed. Knee and toe clearance complying with 306 may be included.",
+      "source": {
+        "filename": "ADA_2010_Standards_for_Accessible_Design.pdf",
+        "page": 110,
+        "section": "304.3.1 Circular Space",
+        "quote": "The turning space shall be a space of 60 inches (1525 mm) diameter minimum."
+      }
+    },
+    {
+      "id": "PVAG-V304.3.1",
+      "title": "Circular turning space on passenger vessels",
+      "attribute": "turning_space_diameter",
+      "min": [
+        {
+          "value": 1525,
+          "unit": "mm"
+        },
+        {
+          "value": 60,
+          "unit": "in"
+        }
+      ],
+      "required_text": "60 inches (1525 mm) diameter minimum",
+      "exceptions": "A T-shaped space complying with V304.3.2 is also allowed.",
+      "source": {
+        "filename": "ATBCB-2013-0003-0007_content.pdf",
+        "page": 111,
+        "section": "V304.3.1 Circular Space",
+        "quote": "The turning space shall be a space of 60 inches (1525 mm) diameter minimum."
+      }
+    },
+    {
+      "id": "ADA-404.2.5",
+      "title": "Door thresholds",
+      "attribute": "door_threshold_height",
+      "max": [
+        {
+          "value": 13,
+          "unit": "mm"
+        },
+        {
+          "value": 0.5,
+          "unit": "in"
+        }
+      ],
+      "required_text": "½ inch (13 mm) high maximum",
+      "exceptions": "Existing or altered thresholds up to 3/4 inch (19 mm) with a beveled edge on each side are allowed. Passenger vessel coamings are treated differently in PVAG V404.2.5.",
+      "source": {
+        "filename": "ADA_2010_Standards_for_Accessible_Design.pdf",
+        "page": 128,
+        "section": "404.2.5 Thresholds",
+        "quote": "Thresholds, if provided at doorways, shall be ½ inch (13 mm) high maximum."
+      }
+    },
+    {
+      "id": "ADA-604.4",
+      "title": "Water closet seat height",
+      "attribute": "toilet_seat_height",
+      "min": [
+        {
+          "value": 430,
+          "unit": "mm"
+        },
+        {
+          "value": 17,
+          "unit": "in"
+        }
+      ],
+      "max": [
+        {
+          "value": 485,
+          "unit": "mm"
+        },
+        {
+          "value": 19,
+          "unit": "in"
+        }
+      ],
+      "required_text": "17 inches (430 mm) minimum and 19 inches (485 mm) maximum",
+      "exceptions": "Exceptions apply to single-occupant toilet rooms reached through a private office, and to children's toilets.",
+      "source": {
+        "filename": "ADA_2010_Standards_for_Accessible_Design.pdf",
+        "page": 167,
+        "section": "604.4 Seats",
+        "quote": "shall be 17 inches (430 mm) minimum and 19 inches (485 mm) maximum measured to the top of the seat."
+      }
+    },
+    {
+      "id": "PVAG-V604.4",
+      "title": "Water closet seat height on passenger vessels",
+      "attribute": "toilet_seat_height",
+      "min": [
+        {
+          "value": 430,
+          "unit": "mm"
+        },
+        {
+          "value": 17,
+          "unit": "in"
+        }
+      ],
+      "max": [
+        {
+          "value": 485,
+          "unit": "mm"
+        },
+        {
+          "value": 19,
+          "unit": "in"
+        }
+      ],
+      "required_text": "17 inches (430 mm) minimum and 19 inches (485 mm) maximum",
+      "exceptions": "",
+      "source": {
+        "filename": "ATBCB-2013-0003-0007_content.pdf",
+        "page": 168,
+        "section": "V604.4 Seats",
+        "quote": "shall be 17 inches (430 mm) minimum and 19 inches (485 mm) maximum measured to the top of the seat."
+      }
+    },
+    {
+      "id": "ADA-902.3",
+      "title": "Dining and work surface height",
+      "attribute": "table_counter_height",
+      "min": [
+        {
+          "value": 710,
+          "unit": "mm"
+        },
+        {
+          "value": 28,
+          "unit": "in"
+        }
+      ],
+      "max": [
+        {
+          "value": 865,
+          "unit": "mm"
+        },
+        {
+          "value": 34,
+          "unit": "in"
+        }
+      ],
+      "required_text": "28 inches (710 mm) minimum and 34 inches (865 mm) maximum",
+      "exceptions": "Surfaces for children have different heights (902.4).",
+      "source": {
+        "filename": "ADA_2010_Standards_for_Accessible_Design.pdf",
+        "page": 223,
+        "section": "902.3 Height",
+        "quote": "The tops of dining surfaces and work surfaces shall be 28 inches (710 mm) minimum and 34 inches (865 mm) maximum"
+      }
+    },
+    {
+      "id": "PVAG-V902.3",
+      "title": "Table and counter height on passenger vessels",
+      "attribute": "table_counter_height",
+      "min": [
+        {
+          "value": 710,
+          "unit": "mm"
+        },
+        {
+          "value": 28,
+          "unit": "in"
+        }
+      ],
+      "max": [
+        {
+          "value": 865,
+          "unit": "mm"
+        },
+        {
+          "value": 34,
+          "unit": "in"
+        }
+      ],
+      "required_text": "28 inches (710 mm) minimum and 34 inches (865 mm) maximum",
+      "exceptions": "15 to 17 inches (380 to 430 mm) is allowed where the clear deck spaces are provided as described in the exception.",
+      "source": {
+        "filename": "ATBCB-2013-0003-0007_content.pdf",
+        "page": 217,
+        "section": "V902.3 Height",
+        "quote": "The tops of tables and counters shall be 28 inches (710 mm) minimum and 34 inches (865 mm) maximum"
+      }
+    },
+    {
+      "id": "ADA-308.2.1",
+      "title": "Unobstructed high forward reach",
+      "attribute": "high_forward_reach_height",
+      "max": [
+        {
+          "value": 1220,
+          "unit": "mm"
+        },
+        {
+          "value": 48,
+          "unit": "in"
+        }
+      ],
+      "required_text": "48 inches (1220 mm) maximum",
+      "exceptions": "Applies where the forward reach is unobstructed. The low forward reach must be 15 inches (380 mm) minimum.",
+      "source": {
+        "filename": "ADA_2010_Standards_for_Accessible_Design.pdf",
+        "page": 118,
+        "section": "308.2.1 Unobstructed",
+        "quote": "the high forward reach shall be 48 inches (1220 mm) maximum"
+      }
+    },
+    {
+      "id": "PVAG-V308.2.1",
+      "title": "Unobstructed high forward reach on passenger vessels",
+      "attribute": "high_forward_reach_height",
+      "max": [
+        {
+          "value": 1220,
+          "unit": "mm"
+        },
+        {
+          "value": 48,
+          "unit": "in"
+        }
+      ],
+      "required_text": "48 inches (1220 mm) maximum",
+      "exceptions": "Applies where the forward reach is unobstructed. The low forward reach must be 15 inches (380 mm) minimum.",
+      "source": {
+        "filename": "ATBCB-2013-0003-0007_content.pdf",
+        "page": 118,
+        "section": "V308.2.1 Unobstructed",
+        "quote": "the high forward reach shall be 48 inches (1220 mm) maximum"
+      }
+    },
+    {
+      "id": "LL-12(3)",
+      "title": "Sills of access openings in superstructure end bulkheads",
+      "attribute": "superstructure_door_sill_height",
+      "min": [
+        {
+          "value": 380,
+          "unit": "mm"
+        }
+      ],
+      "required_text": "at least 380 mm",
+      "exceptions": "'Except as otherwise provided in these regulations': other Load Line regulations, such as 18 for deckhouses and companionways, set different sill heights.",
+      "source": {
+        "filename": "MSIS41_International_Load_Line_R05.23.pdf",
+        "page": 52,
+        "section": "Regulation 12 Doors",
+        "quote": "the height of the sills of access openings in bulkheads at ends of enclosed superstructures shall be at least 380 mm above the deck."
+      }
+    },
+    {
+      "id": "LL-25",
+      "title": "Height of bulwarks or guard rails",
+      "attribute": "guard_rail_height",
+      "min": [
+        {
+          "value": 1,
+          "unit": "m"
+        }
+      ],
+      "required_text": "at least 1 m",
+      "exceptions": "A lesser height may be approved where 1 m would interfere with the normal operation of the ship and adequate protection is provided.",
+      "source": {
+        "filename": "MSIS41_International_Load_Line_R05.23.pdf",
+        "page": 78,
+        "section": "Regulation 25 Protection of the crew",
+        "quote": "The height of the bulwarks or guard rails shall be at least 1 m from the deck"
       }
     }
   ]

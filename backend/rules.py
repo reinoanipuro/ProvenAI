@@ -125,6 +125,39 @@ def parse_measurement(text: str, quantity: str) -> Measurement | None:
     return None
 
 
+def infer_quantity(value_text: str, description: str = "") -> str | None:
+    """Work out what kind of value a design item has, for items without a rule."""
+    is_slope = re.search(r"slope|gradient|incline|ramp", description, re.IGNORECASE)
+    if _RATIO.search(value_text):
+        return "slope"
+    for quantity in ("length", "slope", "percentage"):
+        if quantity == "slope" and not is_slope and "°" not in value_text and "deg" not in value_text:
+            continue
+        if parse_measurement(value_text, quantity) is not None:
+            return quantity
+    return None
+
+
+def parse_limits(text: str, quantity: str) -> tuple[Limit, ...]:
+    """Read every limit stated in text such as '36 inches (915 mm)', in its own unit."""
+    limits: list[Limit] = []
+    if quantity == "slope":
+        for ratio in _RATIO.finditer(text):
+            run = float(ratio["run"].replace(",", "."))
+            if run > 0:
+                limits.append(Limit(float(ratio["rise"].replace(",", ".")) / run, "ratio"))
+    for match in _NUMBER_WITH_UNIT.finditer(text):
+        unit = _UNIT_ALIASES.get((match["unit"] or "").lower())
+        value = float(match["value"].replace(",", "."))
+        if quantity == "length" and unit in LENGTH_TO_MM:
+            limits.append(Limit(value, unit))
+        elif quantity == "slope" and unit == "percent":
+            limits.append(Limit(value / 100, "ratio"))
+        elif quantity == "percentage" and unit == "percent":
+            limits.append(Limit(value, "percent"))
+    return tuple(limits)
+
+
 def _limit_for(limits: tuple[Limit, ...], measurement: Measurement) -> Limit:
     """Use the limit written in the design's own unit system.
 

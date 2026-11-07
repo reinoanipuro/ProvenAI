@@ -7,3 +7,5 @@ pypdfium2
 chromadb
 sentence-transformers
 rank-bm25
+pillow
+python-multipart
