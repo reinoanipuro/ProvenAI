@@ -9,11 +9,13 @@ import { statusColorVar, statusRank } from "./Status";
 type VB = { x: number; y: number; w: number; h: number };
 type Box = { x: number; y: number; w: number; h: number };
 
-export function DrawingViewer({ elements, results, selectedElementId, onSelectElement, pdfUrl, fileName, selectedResult, onWhy, markerLimit, calibrate = false, onCursor, onZoom, compact = false, hoveredResultId, onHoverResult }: {
+export function DrawingViewer({ elements, results, selectedElementId, onSelectElement, pdfUrl, fileName, selectedResult, onWhy, markerLimit, calibrate = false, onCursor, onZoom, compact = false, plain = false, hoveredResultId, onHoverResult }: {
   elements: ShipElement[]; results: Result[]; selectedElementId: string | null; onSelectElement: (id: string, resultId?: string) => void;
   pdfUrl: string | null; fileName?: string | undefined;
   selectedResult?: Result | null; onWhy?: () => void; markerLimit?: number | undefined; calibrate?: boolean; compact?: boolean; onCursor?: (p: { x: number; y: number } | null) => void; onZoom?: (percent: number) => void;
   hoveredResultId?: string | null; onHoverResult?: (id: string | null) => void;
+  /** Thin boxes with a light tint and no callouts, so the marked text stays readable. */
+  plain?: boolean;
 }) {
   const pages = useMemo(() => [...new Set(elements.map((e) => e.page))].sort((a, b) => a - b), [elements]);
   const [page, setPage] = useState(pages[0] ?? 1);
@@ -46,6 +48,14 @@ export function DrawingViewer({ elements, results, selectedElementId, onSelectEl
     let cancelled = false;
     (async () => {
       try {
+        if (/\.(png|jpe?g|webp|bmp)$/i.test(fileName ?? "")) {
+          // A picture: marks are in its pixels from the bottom left, like PDF points.
+          const picture = new Image();
+          picture.src = pdfUrl;
+          await picture.decode();
+          if (!cancelled) { setPdfPages([1]); setImg({ src: pdfUrl, w: picture.naturalWidth, h: picture.naturalHeight }); setVb({ x: 0, y: 0, w: picture.naturalWidth, h: picture.naturalHeight }); }
+          return;
+        }
         const pdfjs = await import("pdfjs-dist");
         const worker = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
         pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
@@ -59,7 +69,7 @@ export function DrawingViewer({ elements, results, selectedElementId, onSelectEl
         if (!context) return;
         await p.render({ canvasContext: context, viewport: vp }).promise;
         if (!cancelled) { setImg({ src: canvas.toDataURL(), w: vp1.width, h: vp1.height }); setVb({ x: 0, y: 0, w: vp1.width, h: vp1.height }); }
-      } catch { if (!cancelled) setImg(null); }
+      } catch (error) { console.warn("PDF could not be shown", error); if (!cancelled) setImg(null); }
     })();
     return () => { cancelled = true; };
   }, [pdfUrl, page]);
@@ -152,7 +162,7 @@ export function DrawingViewer({ elements, results, selectedElementId, onSelectEl
     </div>}
     <svg ref={svgRef} aria-label="Inspection drawing" viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`} className="block min-h-0 w-full flex-1 cursor-grab touch-none bg-canvas active:cursor-grabbing"
       onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={() => { drag.current = null; }} preserveAspectRatio="xMidYMid meet">
-      {reference ? <image className="drawing-image" opacity={markers.length ? .55 : 1} href={referenceDrawing.url} x={0} y={0} width={W} height={H} /> : img && <image opacity={markers.length ? .55 : 1} href={img.src} x={0} y={0} width={W} height={H} />}
+      {reference ? <image className="drawing-image" opacity={markers.length ? .55 : 1} href={referenceDrawing.url} x={0} y={0} width={W} height={H} /> : img && <image opacity={markers.length && !plain ? .55 : 1} href={img.src} x={0} y={0} width={W} height={H} />}
       {[...markers].sort((a,b) => (a.status === "UNKNOWN" ? -1 : 1) - (b.status === "UNKNOWN" ? -1 : 1)).map((r) => {
         const b = boxFor(r);
         if (!b) return null;
@@ -164,10 +174,10 @@ export function DrawingViewer({ elements, results, selectedElementId, onSelectEl
         return <g key={r.id} data-element={r.element_id} data-finding={r.id} data-marker={r.status} className={`cursor-pointer ${hoveredResultId===r.id?'cloud-hovered':''}`} onMouseEnter={()=>onHoverResult?.(r.id)} onMouseLeave={()=>onHoverResult?.(null)}
           onPointerDown={(e) => { if (!calibrate) e.stopPropagation(); }}
           onClick={(e) => { if (!calibrate) { e.stopPropagation(); onSelectElement(r.element_id, r.id); onWhy?.(); } }}>
-          {r.status==='PASS' ? <rect x={b.x} y={b.y} width={b.w} height={b.h} fill="none" stroke={color} strokeWidth={hoveredResultId===r.id?2:1} vectorEffect="non-scaling-stroke"/> : <path className="redline-cloud" d={revisionCloud(b, 18 * unit)} pathLength={1} fill={r.status==='FAIL'?'var(--redline-fill)':'none'} stroke={color} strokeWidth={hoveredResultId===r.id?5:3} strokeDasharray={r.status === "UNKNOWN" ? "0.012 0.008" : undefined} vectorEffect="non-scaling-stroke" />}
-          <line x1={b.x + b.w} y1={b.y + b.h / 2} x2={bx} y2={by} stroke={color} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          {plain ? <rect x={b.x} y={b.y} width={b.w} height={b.h} rx={3 * unit} fill={color} fillOpacity={0.1} stroke={color} strokeWidth={selectedElementId===r.element_id || hoveredResultId===r.id ? 4 : 2} vectorEffect="non-scaling-stroke"/> : r.status==='PASS' ? <rect x={b.x} y={b.y} width={b.w} height={b.h} fill="none" stroke={color} strokeWidth={hoveredResultId===r.id?2:1} vectorEffect="non-scaling-stroke"/> : <path className="redline-cloud" d={revisionCloud(b, 18 * unit)} pathLength={1} fill={r.status==='FAIL'?'var(--redline-fill)':'none'} stroke={color} strokeWidth={hoveredResultId===r.id?5:3} strokeDasharray={r.status === "UNKNOWN" ? "0.012 0.008" : undefined} vectorEffect="non-scaling-stroke" />}
+          {!plain && <><line x1={b.x + b.w} y1={b.y + b.h / 2} x2={bx} y2={by} stroke={color} strokeWidth={1} vectorEffect="non-scaling-stroke" />
           <circle cx={bx} cy={by} r={(r.status==='PASS'?9:13) * unit} fill="var(--card)" stroke={color} strokeWidth={2} vectorEffect="non-scaling-stroke" />
-          <text x={bx} y={by + 4 * unit} textAnchor="middle" fontSize={13 * unit} fontWeight={600} fontFamily="var(--font-mono)" fill={color}>{r.status==='PASS'?'✓':r.status === "UNKNOWN" ? "?" : number}</text>
+          <text x={bx} y={by + 4 * unit} textAnchor="middle" fontSize={13 * unit} fontWeight={600} fontFamily="var(--font-mono)" fill={color}>{r.status==='PASS'?'✓':r.status === "UNKNOWN" ? "?" : number}</text></>}
         </g>;
       })}
       {calibrate && point && <g pointerEvents="none"><path d={`M ${point.x * W - 8 * unit} ${point.y * H} h ${16 * unit} M ${point.x * W} ${point.y * H - 8 * unit} v ${16 * unit}`} stroke="var(--foreground)" vectorEffect="non-scaling-stroke" /></g>}

@@ -9,8 +9,13 @@ per rule. This module provides that API on top of the existing pipeline:
 - Every PASS / FAIL comes from backend.rules.evaluate, as everywhere else.
 - Items without an approved rule are looked up in the regulations
   (backend.checker.check_with_regulations) and always need review.
-- Values found in a PDF get their position on the page, so the app can mark
-  them on the drawing.
+- Values found in a PDF or a picture get their position on the page, so the
+  app can mark them in red where they are printed.
+- The result is shown as soon as Python has checked the values. Mistral then
+  writes the summary and reads the regulations for values no rule covers, in
+  the background ("refining"), and the result updates as it goes.
+- Every result names its regulation file and page, and the inspection has
+  step-by-step next steps for the engineer, made by Python from the results.
 
 The app's types only know three element types (door, cabin, corridor) and
 three statuses (PASS, FAIL, UNKNOWN), so richer results are mapped onto them:
@@ -31,8 +36,10 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from . import llm as llm_module
-from .checker import _match_quote, approve_rule, check_with_regulations, verify_citation
-from .documents import MAX_FILE_BYTES, MAX_FILES, new_upload_folder, safe_name
+from .checker import _match_quote, approve_rule, check_with_regulations, unsupported_numbers, verify_citation
+from .documents import (
+    MAX_FILE_BYTES, MAX_FILES, TEXT_TYPES, new_upload_folder, ocr_positions, read_document, safe_name,
+)
 from .intake import find_items, read_files
 from .rag import load_catalog
 from .rules import IMPERIAL, LENGTH_TO_MM, LibraryRule, Limit, Source, evaluate, load_library, parse_limits
@@ -59,6 +66,12 @@ _lock = threading.RLock()
 _store: dict[str, dict] = {}
 _proposals: dict[str, dict] = {}
 _worker = ThreadPoolExecutor(max_workers=1)
+# The slow AI part runs after the result is shown, one inspection at a time.
+_refiner = ThreadPoolExecutor(max_workers=1)
+# Rule quotes confirmed in the regulation index; they only change with the rule library.
+_citation_cache: dict[tuple, dict] = {}
+RANK = {"FAIL": 0, "UNKNOWN": 1, "PASS": 2}
+AI_RULE_SET = "Read from regulation by AI"
 
 
 def _now() -> str:
@@ -265,26 +278,36 @@ def _element_type(attribute: str, name: str) -> str:
     return "cabin"
 
 
-def _locate(folder: Path, filename: str, page: int | None, value_text: str) -> list[float] | None:
-    """Where a value is printed on a PDF page, in PDF points from the bottom left."""
+def _locate(folder: Path, filename: str, page: int | None, texts: list[str]) -> list[float] | None:
+    """Where the first of these texts is printed on a PDF page, in PDF points from the bottom left."""
     import pypdfium2
 
     path = folder / filename
-    if not page or path.suffix.lower() != ".pdf" or not path.is_file():
+    if not page or not path.is_file():
+        return None
+    ocr_lines = ocr_positions(folder, filename).get(str(page))
+    if ocr_lines:
+        return _locate_ocr(path, page, ocr_lines, texts)
+    if path.suffix.lower() != ".pdf":
         return None
     document = pypdfium2.PdfDocument(str(path))
     try:
         if page > len(document):
             return None
         textpage = document[page - 1].get_textpage()
-        searcher = textpage.search(value_text, match_case=False)
-        found = searcher.get_next()
-        searcher.close()
-        if found is None:
-            textpage.close()
-            return None
-        boxes = [textpage.get_rect(index) for index in range(textpage.count_rects(*found))]
+        boxes = []
+        for text in texts:
+            if len(text.strip()) < 2:
+                continue
+            searcher = textpage.search(text.strip(), match_case=False)
+            found = searcher.get_next()
+            searcher.close()
+            if found is not None:
+                boxes = [textpage.get_rect(index) for index in range(textpage.count_rects(*found))]
+                break
         textpage.close()
+        if not boxes:
+            return None
     finally:
         document.close()
     margin = 8.0
@@ -292,6 +315,45 @@ def _locate(folder: Path, filename: str, page: int | None, value_text: str) -> l
         min(box[0] for box in boxes) - margin, min(box[1] for box in boxes) - margin,
         max(box[2] for box in boxes) + margin, max(box[3] for box in boxes) + margin,
     ]
+
+
+def _locate_ocr(path: Path, page: int, lines: list, texts: list[str]) -> list[float] | None:
+    """Where a text is on a picture or scanned page, from its saved OCR lines.
+
+    Returned like _locate: from the bottom left, in PDF points for a PDF page
+    and in pixels for a picture, which is what the app draws on.
+    """
+    def norm(text: str) -> str:
+        return "".join(text.lower().split())
+
+    hit = None
+    for text in texts:
+        wanted = norm(text)
+        if len(wanted) < 2:
+            continue
+        hit = next((line for line in lines if norm(line[0]) == wanted), None) or next(
+            (line for line in lines if wanted in norm(line[0])), None
+        )
+        if hit:
+            break
+    if not hit:
+        return None
+    if path.suffix.lower() == ".pdf":
+        import pypdfium2
+
+        document = pypdfium2.PdfDocument(str(path))
+        try:
+            width, height = document[page - 1].get_size()
+        finally:
+            document.close()
+    else:
+        from PIL import Image, ImageOps
+
+        with Image.open(path) as image:
+            width, height = ImageOps.exif_transpose(image).size
+    _, x0, y0, x1, y1 = hit
+    margin = 0.006 * max(width, height)
+    return [x0 * width - margin, (1 - y1) * height - margin, x1 * width + margin, (1 - y0) * height + margin]
 
 
 def _attr(item: dict, rule: LibraryRule | None, folder: Path) -> dict:
@@ -340,10 +402,19 @@ def _build_elements(state: dict, items: list[dict], folder: Path) -> list[dict]:
             }
             elements[key] = element
         evidence = _attr(item, rule_for.get(item["attribute"]), folder)
-        if element["bbox"] == [0, 0, 0, 0] and item.get("source_file"):
-            box = _locate(folder, item["source_file"], item.get("source_page"), item["value_text"])
-            if box:
+        if item.get("source_file"):
+            # The whole printed line is searched first: a value like "800 mm"
+            # can appear several times on a page, the full line rarely does.
+            line = (item.get("source_line") or "").split(" | ")[-1].strip()
+            box = _locate(folder, item["source_file"], item.get("source_page"), [line, item["value_text"]])
+            if box and element["bbox"] == [0, 0, 0, 0]:
                 element["bbox"], element["page"] = box, item["source_page"]
+            elif box and element["page"] == item["source_page"]:
+                # The mark covers every value of the element on that page.
+                element["bbox"] = [
+                    min(element["bbox"][0], box[0]), min(element["bbox"][1], box[1]),
+                    max(element["bbox"][2], box[2]), max(element["bbox"][3], box[3]),
+                ]
         if attribute in element["attrs"]:
             element["attrs"][attribute].setdefault("conflicts", []).append(evidence)
         else:
@@ -397,6 +468,10 @@ def _rule_results(state: dict, citations: dict) -> list[dict]:
                 ),
                 "missing": missing,
                 "evidence": evidence,
+                "sources": [{
+                    "filename": rule.source.filename, "page": rule.source.page, "section": rule.source.section,
+                    "quote": rule.source.quote, "verified": bool(citation["verified"]), "closest": False,
+                }],
                 "audit": _audit(state, [
                     ("ingest", f"Read {len(state['files'])} files"),
                     (model, f"Found {rule.attribute} = {attr['value_text']} in {attr['source_file']}"
@@ -428,7 +503,7 @@ def _ai_result(state: dict, item: dict, found: dict) -> dict:
         "element_id": element["id"],
         "status": found["status"] if numeric else "UNKNOWN",
         "needs_review": True,
-        "rule_set": "Read from regulation by AI",
+        "rule_set": AI_RULE_SET,
         "clause_ref": clause_ref.strip(" ·"),
         "clause_text": citation.get("quote") or (passage.get("text") or "")[:400],
         "check_name": f"{item['property'] or item['element']} ({'AI-read, ' + confidence + ' confidence' if confidence else 'manual review'})",
@@ -446,6 +521,14 @@ def _ai_result(state: dict, item: dict, found: dict) -> dict:
         ),
         "missing": [] if numeric else [item["_attr"]],
         "evidence": [{**attr, "attr": item["_attr"], "conflicts": None}] if attr else [],
+        "sources": [{
+            "filename": citation.get("filename", ""), "page": citation.get("page"), "section": citation.get("section", ""),
+            "quote": citation.get("quote", ""), "verified": True, "closest": False,
+        }] if citation else [{
+            "filename": passage_item.get("filename", ""), "page": passage_item.get("page"),
+            "section": passage_item.get("section") or "", "quote": (passage_item.get("text") or "")[:600],
+            "verified": False, "closest": True,
+        } for passage_item in passages[:3]],
         "audit": _audit(state, [
             ("regulation search", f"Searched the regulations for {item['property'] or item['element']}"),
             (f"reader · {state.get('_model', 'Mistral')} (Ollama, local)",
@@ -479,10 +562,204 @@ def _questions(state: dict) -> list[dict]:
 def _evaluate_all(state: dict) -> None:
     state["results"] = _rule_results(state, state.get("_citations", {})) + state.get("_ai_results", [])
     state["questions"] = _questions(state)
+    state["next_steps"] = _next_steps(state)
+
+
+def _groups(state: dict) -> list[dict]:
+    """One entry per design value: its element, the worst status, and every result for it.
+
+    Several rule sets can check the same value (ADA and PVAG), and the engineer
+    should see one finding for it, not one per rule.
+    """
+    elements = {element["id"]: element for element in state.get("elements", [])}
+    grouped: dict[tuple, list[dict]] = {}
+    for result in state.get("results", []):
+        grouped.setdefault((result["element_id"], ",".join(result["required_inputs"])), []).append(result)
+    groups = []
+    for (element_id, inputs), results in grouped.items():
+        results = sorted(results, key=lambda result: RANK[result["status"]])
+        element = elements.get(element_id, {"name": element_id, "attrs": {}})
+        attr = element.get("attrs", {}).get(inputs.split(",")[0], {}) if inputs else {}
+        groups.append({"element": element, "attr": attr, "status": results[0]["status"], "main": results[0], "results": results})
+    return sorted(groups, key=lambda group: (RANK[group["status"]], group["element"].get("name", "")))
+
+
+def _where(source: dict | None) -> str:
+    return f"{source.get('filename', '')}, page {source.get('page')}" if source and source.get("filename") else ""
+
+
+def _rules_text(results: list[dict]) -> str:
+    names = []
+    for result in results:
+        name = result["clause_ref"].split(" · ")[0].strip()
+        if name and name not in names:
+            names.append(name)
+    return " and ".join(names)
+
+
+def _next_steps(state: dict) -> list[dict]:
+    """What the engineer should do now, in order, worked out by Python from the results.
+
+    Fixes come first, then values the engineer must confirm or check by hand,
+    then anything that could not be read. Each step points to the results it
+    resolves and to the regulation page to read.
+    """
+    attributes, _ = load_library()
+    steps: list[dict] = []
+
+    def add(kind: str, title: str, detail: str, group: dict | None = None, source: dict | None = None) -> None:
+        steps.append({
+            "kind": kind, "title": title, "detail": detail,
+            "result_ids": [result["id"] for result in group["results"]] if group else [],
+            "element_id": group["element"].get("id") if group else None,
+            "source": source,
+        })
+
+    groups = _groups(state)
+    for group in groups:
+        if group["status"] != "FAIL":
+            continue
+        name, main, attr = group["element"].get("name", ""), group["main"], group["attr"]
+        source = (main.get("sources") or [None])[0]
+        failing = [result for result in group["results"] if result["status"] == "FAIL"]
+        ai = main["rule_set"] == AI_RULE_SET
+        where = _where(source)
+        add(
+            "confirm" if ai else "fix",
+            f"{'Confirm and fix' if ai else 'Fix'} {name}: {main['check_name']}",
+            f"The document gives {attr.get('value_text', main['measured'])}; {_rules_text(failing)} "
+            f"require{'s' if len(failing) == 1 else ''} {main['required']} {main['unit']}. {main['recommendation']}"
+            + (f" Read {where}." if where else "")
+            + (" The limit was read by AI: confirm it applies before changing the design." if ai else ""),
+            group, source,
+        )
+    for group in groups:
+        if group["status"] != "UNKNOWN":
+            continue
+        name, main, attr = group["element"].get("name", ""), group["main"], group["attr"]
+        source = (main.get("sources") or [None])[0]
+        label = attributes.get(main["required_inputs"][0], {}).get("label", "") if main["required_inputs"] else ""
+        if "disagree" in main["reason"]:
+            values = ", ".join(dict.fromkeys(
+                [attr.get("value_text", "")] + [item.get("value_text", "") for item in attr.get("conflicts") or []]
+            ))
+            add("confirm", f"Confirm one value for {name}",
+                f"The documents give different values ({values}). Correct the document so it states one value, "
+                "then check it again.", group, source)
+        elif main["rule_set"] == AI_RULE_SET:
+            where = _where(source)
+            place = f"Start with {where}, the closest passage found." if where else (
+                "No regulation passage matched; the regulation that covers it may be missing from the index."
+            )
+            add("check", f"Check by hand: {name} ({attr.get('value_text', '')})",
+                f"No approved rule covers this value, and the AI could not read a clear limit for it. {place}",
+                group, source)
+        else:
+            add("measure", f"State the {label or 'value'} of {name}",
+                f"The document does not state it clearly, so {_rules_text(group['results'])} could not be checked. "
+                "Add the value to the document and check it again.", group, source)
+    for warning in state.get("warnings", [])[:5]:
+        add("check", "Check what could not be read", warning)
+    if not groups:
+        add("check", "No design values were found",
+            "Make sure the document states values with units next to what they describe, "
+            "such as 'Corridor 5-12, clear width: 850 mm', then check it again.")
+    elif steps:
+        add("recheck", "Check the corrected document again",
+            "When the changes are made, drop the revised document on the start page to confirm every issue is closed.")
+    else:
+        add("info", "No action needed",
+            f"All {len(groups)} values that were found meet the regulations. Keep this result as the check record.")
+    for number, step in enumerate(steps, start=1):
+        step["number"] = number
+    return steps
+
+
+def _facts(state: dict, limit: int = 30) -> list[dict]:
+    """The checked results, as plain facts for Mistral's summary."""
+    facts = []
+    for group in _groups(state)[:limit]:
+        main = group["main"]
+        fact = {
+            "element": group["element"].get("name", ""),
+            "check": main["check_name"],
+            "result": {"FAIL": "FAIL", "PASS": "PASS"}.get(group["status"], "not checked"),
+            "design": group["attr"].get("value_text", ""),
+        }
+        if main["required"]:
+            fact["required"] = f"{main['required']} {main['unit']}".strip()
+        if main["rule_set"] == AI_RULE_SET and group["status"] != "UNKNOWN":
+            fact["result"] = f"possible {group['status']}"
+            fact["confidence"] = main.get("confidence") or "low"
+        elif group["status"] != "UNKNOWN":
+            fact["regulation"] = _rules_text(group["results"])
+        facts.append(fact)
+    return facts
+
+
+def _template_summary(state: dict) -> str:
+    """Python's own summary, shown until Mistral's is ready or if Mistral's fails the number check."""
+    groups = _groups(state)
+    if not groups:
+        return "No design values with a matching rule were found in the documents, so nothing was checked."
+    fails = [group for group in groups if group["status"] == "FAIL"]
+    unknown = [group for group in groups if group["status"] == "UNKNOWN"]
+    passed = [group for group in groups if group["status"] == "PASS"]
+    parts = []
+    if fails:
+        listed = "; ".join(
+            f"{group['element'].get('name', '')} has {group['attr'].get('value_text', '')} where "
+            f"{group['main']['required']} {group['main']['unit']} is required"
+            for group in fails[:5]
+        )
+        parts.append(f"{len(fails)} of {len(groups)} values do not meet the regulations: {listed}"
+                     + ("; and more, see the list." if len(fails) > 5 else "."))
+    if passed:
+        parts.append(f"{len(passed)} value{'s' if len(passed) != 1 else ''} meet the regulations.")
+    if unknown:
+        parts.append(f"{len(unknown)} value{'s' if len(unknown) != 1 else ''} could not be checked automatically "
+                     "and need an engineer's review.")
+    if not fails and not unknown:
+        parts.insert(0, "The design meets every regulation that was checked.")
+    return " ".join(parts)
+
+
+def _write_summary(state: dict, llm) -> None:
+    """Mistral explains the results; Python rejects the summary if it has a number not in them."""
+    with _lock:
+        state["progress"] = {"step": 4, "label": "Done · AI is writing the summary"}
+        _save(state)
+        facts = _facts(state)
+    if not facts:
+        return
+    try:
+        text = llm_module.summarize(llm, facts)
+    except llm_module.LLMUnavailableError as error:
+        with _lock:
+            state["summary"]["note"] = f"The AI summary is not available ({error}), so Python's summary is shown."
+        return
+    extra = unsupported_numbers(text, facts)
+    with _lock:
+        _mark(state, "AI summary")
+        if text and not extra:
+            state["summary"] = {"text": text, "source": "mistral"}
+        else:
+            state["summary"] = {
+                "text": _template_summary(state), "source": "python",
+                "note": "The AI summary used numbers that are not in the results, so Python's summary is shown.",
+            }
+        _save(state)
+
+
+def _mark(state: dict, label: str) -> None:
+    """When each stage ended, in seconds from the upload, so the time can be shown and improved."""
+    state.setdefault("timings", []).append({"label": label, "at": round(time.time() - state.get("_started", time.time()), 1)})
 
 
 def _progress(state: dict, step: int, label: str | None = None) -> None:
     with _lock:
+        if step > state.get("progress", {}).get("step", 0) and step > 1:
+            _mark(state, STEPS[step - 1])
         state["progress"] = {"step": step, "label": label or STEPS[step]}
         state["status"] = "done" if step >= 4 else "queued" if step == 0 else "running"
         _save(state)
@@ -497,34 +774,100 @@ def _run(state: dict, files: list[tuple[str, bytes]], get_llm, get_retriever) ->
         attributes, rules = load_library()
         llm = get_llm()
         state["_model"] = getattr(llm, "model", "Mistral")
+        pictures = sum(1 for document in documents for page in document.pages if page.read_by == "ocr")
+        _progress(state, 2, "Finding design values (Mistral)"
+                  + (f" · {pictures} picture page{'s' if pictures != 1 else ''} read with OCR" if pictures else ""))
         items, item_warnings = find_items(documents, llm, attributes)
-        state["_warnings"] = warnings + item_warnings
         _progress(state, 3)
         with _lock:
             state["elements"] = _build_elements(state, items, folder)
         retriever = get_retriever()
-        state["_citations"] = {
-            rule.id: {key: value for key, value in verify_citation(rule, retriever).items() if key != "passage"}
-            for rule in rules
-        }
+        state["_citations"] = _citations(rules, retriever)
         catalog = load_catalog()
+        covered = {rule.attribute for rule in rules}
+        unmatched = [item for item in items if item["attribute"] not in covered]
         ai_results = []
-        unmatched = [item for item in items if item["attribute"] not in {rule.attribute for rule in rules}]
         for number, item in enumerate(unmatched, start=1):
-            _progress(state, 3, f"Looking up item {number} of {len(unmatched)} in the regulations")
-            found = check_with_regulations(
-                item, llm if number <= MAX_AI_LOOKUPS else None, retriever, catalog
-            )
-            ai_results.append(_ai_result(state, item, found))
+            # Only the regulation search here, which takes seconds; Mistral reads the passages afterwards.
+            _progress(state, 3, f"Finding regulation passages for values no rule covers ({number} of {len(unmatched)})")
+            ai_results.append(_ai_result(state, item, check_with_regulations(item, None, retriever, catalog)))
         with _lock:
+            state["warnings"] = warnings + item_warnings
             state["_ai_results"] = ai_results
             _evaluate_all(state)
-        _progress(state, 4)
+            state["summary"] = {"text": _template_summary(state), "source": "python"}
+            state["refining"] = True
+            state["duration_s"] = round(time.time() - state["_started"])
+        _progress(state, 4, "Done · AI is writing the summary")
+        _refiner.submit(_refine, state, unmatched, llm, retriever, catalog)
     except Exception as error:  # noqa: BLE001 - the app shows any failure as an error state
         with _lock:
             state["status"] = "error"
+            state["refining"] = False
             state["progress"] = {"step": state["progress"]["step"], "label": f"Failed: {error}"}
             _save(state)
+
+
+def _citations(rules: list[LibraryRule], retriever) -> dict:
+    """Each rule's quote confirmed on its regulation page, worked out once per rule."""
+    citations = {}
+    for rule in rules:
+        key = (rule.id, rule.source.filename, rule.source.page, rule.source.quote, rule.required_text)
+        with _lock:
+            cached = _citation_cache.get(key)
+        if cached is None:
+            cached = {name: value for name, value in verify_citation(rule, retriever).items() if name != "passage"}
+            if retriever is not None:
+                with _lock:
+                    _citation_cache[key] = cached
+        citations[rule.id] = cached
+    return citations
+
+
+def _refine(state: dict, unmatched: list[dict], llm, retriever, catalog: dict) -> None:
+    """After the result is shown: Mistral's summary, then Mistral reads the regulations for uncovered values."""
+    try:
+        _write_summary(state, llm)
+        lookups = unmatched[:MAX_AI_LOOKUPS]
+        changed = False
+        for number, item in enumerate(lookups, start=1):
+            with _lock:
+                state["progress"] = {
+                    "step": 4,
+                    "label": f"Done · AI is reading the regulations for value {number} of {len(lookups)} that no rule covers",
+                }
+                _save(state)
+            result = _ai_result(state, item, check_with_regulations(item, llm, retriever, catalog))
+            with _lock:
+                state["_ai_results"] = [result if old["id"] == result["id"] else old for old in state["_ai_results"]]
+                _evaluate_all(state)
+                _save(state)
+            changed = changed or result["status"] != "UNKNOWN"
+        if changed:
+            _write_summary(state, llm)
+    except Exception as error:  # noqa: BLE001 - the shown result stays; only the refinement stops
+        with _lock:
+            state.setdefault("warnings", []).append(f"The AI step stopped early: {error}")
+    finally:
+        with _lock:
+            _mark(state, "AI finished")
+            state["refining"] = False
+            state["progress"] = {"step": 4, "label": "Done"}
+            _save(state)
+
+
+def warm_up(get_retriever) -> None:
+    """Load the regulation search, confirm the rule quotes and load OCR before the first upload."""
+    def run() -> None:
+        try:
+            _citations(load_library()[1], get_retriever())
+        except Exception:  # noqa: BLE001 - the first inspection does this itself if warm-up fails
+            pass
+        from .ocr import warm_up as ocr_warm_up
+
+        ocr_warm_up()
+
+    _worker.submit(run)
 
 
 # ---------------------------------------------------------------- proposals
@@ -696,6 +1039,7 @@ def create_router(get_llm, get_retriever) -> APIRouter:
             "created_at": _now(), "status": "queued", "progress": {"step": 0, "label": STEPS[0]},
             "rule_set_ids": [item for item in ruleset_ids if item], "files": listed,
             "elements": [], "results": [], "questions": [],
+            "summary": None, "next_steps": [], "warnings": [], "refining": False,
             "_folder": str(folder.relative_to(ROOT)) if folder.is_relative_to(ROOT) else str(folder),
             "_reviews": {}, "_ai_results": [], "_citations": {}, "_started": time.time(),
         }
@@ -723,6 +1067,7 @@ def create_router(get_llm, get_retriever) -> APIRouter:
                     "page": None, "section": "Missing information form", "method": "Engineer input",
                 }
             _evaluate_all(state)
+            state["summary"] = {"text": _template_summary(state), "source": "python"}
             _save(state)
             return _public(state)
 
@@ -759,5 +1104,17 @@ def create_router(get_llm, get_retriever) -> APIRouter:
         if not path.is_file():
             raise HTTPException(status_code=404, detail="File not found.")
         return FileResponse(path, media_type=entry["type"], filename=entry["name"])
+
+    @router.get("/inspections/{inspection_id}/files/{file_id}/text")
+    def get_file_text(inspection_id: str, file_id: str) -> dict:
+        """The text of a text or Word file, so the app can show it with the issues marked."""
+        with _lock:
+            state = _load(inspection_id)
+        entry = next((item for item in state["files"] if item["id"] == file_id), None)
+        path = (ROOT / state["_folder"] / entry["name"]).resolve() if entry else None
+        if path is None or not path.is_file() or path.suffix.lower() not in TEXT_TYPES | {".docx"}:
+            raise HTTPException(status_code=404, detail="No text view for this file.")
+        document = read_document(entry["name"], path.read_bytes(), path.parent)
+        return {"pages": [{"page": page.number, "text": page.text} for page in document.pages]}
 
     return router

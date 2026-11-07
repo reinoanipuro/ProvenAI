@@ -4,6 +4,38 @@ ProvenAI checks ship designs against maritime and accessibility regulations.
 Python makes every decision, a local Mistral model only reads text and writes
 summaries, and every result links to the regulation page it comes from.
 
+## Start
+
+After the one-time setup (see Installation, Local language model and the
+regulation index below), start everything with one command in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File start.ps1
+```
+
+It opens the checker (port 8000) and the web app (port 8080) in their own
+windows and opens http://localhost:8080. Drop a 2D picture of a design (PNG,
+JPG) or a design document (PDF, Word or text). The result page shows:
+
+- the verdict, and a summary of the whole design: Python's summary at once,
+  then Mistral's AI summary, which is kept only if every number in it is in
+  the results;
+- the design with every issue boxed in red where it is printed (pictures and
+  scanned pages are read with local OCR: OnnxTR, the ONNX build of docTR by
+  Mindee, France);
+- numbered next steps: what to fix, what to confirm, and what Mistral and
+  Python could not resolve and the engineer must check by hand, each with the
+  regulation file and page. Opening a step shows that page with the quote
+  highlighted.
+
+The result is shown as soon as Python has checked the values; the AI summary
+and the AI reading of regulations for values no rule covers follow in the
+background, and the page updates by itself.
+
+To try it with random, unbiased test designs and an answer key:
+`python scripts/make_random_plan.py` (text PDF) and
+`python scripts/make_plan_picture.py` (2D deck plan picture).
+
 ## How the design check works
 
 ```text

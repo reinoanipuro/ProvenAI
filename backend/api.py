@@ -48,6 +48,10 @@ def _warm_up() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     threading.Thread(target=_warm_up, daemon=True).start()
+    # Rule quotes confirmed and OCR loaded before the first upload, so it is not slower.
+    lovable.warm_up(_optional_retriever)
+    if hasattr(llm, "load"):
+        threading.Thread(target=llm.load, daemon=True).start()
     yield
 
 

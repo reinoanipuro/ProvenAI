@@ -42,6 +42,14 @@ class FakeRetriever:
                          "chunk_id": "c", "text": rule.source.quote}]
         return []
 
+    def find_passage(self, filename, page, quote):
+        from backend.rules import load_library
+
+        for rule in load_library()[1]:
+            if (rule.source.filename, rule.source.page, rule.source.quote) == (filename, page, quote):
+                return {"filename": filename, "page": page, "page_end": page, "chunk_id": "c", "text": quote}
+        return None
+
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
@@ -108,6 +116,34 @@ def test_inspection_runs_and_python_decides(client):
     # No approved rule and nothing found in the regulations: unknown, and needs review.
     plate = next(result for result in inspection["results"] if result["check_id"].startswith("AI-"))
     assert plate["status"] == "UNKNOWN" and plate["needs_review"]
+
+
+def test_result_has_regulation_pages_next_steps_and_a_summary(client):
+    from backend.rules import load_library
+
+    inspection = create(client)
+    for _ in range(200):
+        if not inspection["refining"]:
+            break
+        time.sleep(0.05)
+        inspection = client.get(f"/lovable/inspections/{inspection['id']}").json()
+
+    corridor = next(element for element in inspection["elements"] if element["name"] == "Passenger corridor")
+    width = next(result for result in inspection["results"] if result["id"] == f"ADA-403.5.1:{corridor['id']}")
+    rule = next(rule for rule in load_library()[1] if rule.id == "ADA-403.5.1")
+    assert width["sources"][0] == {
+        "filename": rule.source.filename, "page": rule.source.page, "section": rule.source.section,
+        "quote": rule.source.quote, "verified": True, "closest": False,
+    }
+
+    steps = inspection["next_steps"]
+    assert steps[0]["kind"] == "fix" and "Passenger corridor" in steps[0]["title"]
+    assert width["id"] in steps[0]["result_ids"] and f"page {rule.source.page}" in steps[0]["detail"]
+    assert any(step["kind"] == "check" and "Hull plate" in step["title"] for step in steps)
+    assert steps[-1]["kind"] == "recheck" and [step["number"] for step in steps] == list(range(1, len(steps) + 1))
+    # The fake Mistral writes an empty summary, so Python's own summary is kept.
+    assert inspection["summary"]["source"] == "python" and "800 mm" in inspection["summary"]["text"]
+    assert inspection["status"] == "done" and inspection["progress"]["label"] == "Done"
 
 
 def test_engineer_answers_are_rechecked(client):

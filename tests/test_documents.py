@@ -41,12 +41,33 @@ def test_pdf_text_pages_are_read_with_page_numbers(tmp_path):
     assert not document.pictures
 
 
-def test_pictures_are_stored_for_later_2d_reading(tmp_path):
+def test_pictures_are_read_with_ocr_and_values_can_be_marked(tmp_path, monkeypatch):
+    import io
+
+    from PIL import Image
+
+    from backend import lovable, ocr
+
+    lines = [ocr.Line("Corridor 5-12", (0.1, 0.1, 0.5, 0.2)), ocr.Line("Clear width: 800 mm", (0.1, 0.3, 0.6, 0.4))]
+    monkeypatch.setattr(ocr, "read_lines", lambda image: lines)
+    picture = io.BytesIO()
+    Image.new("RGB", (1000, 500), "white").save(picture, format="PNG")
+
+    document = read_document("deck plan.png", picture.getvalue(), tmp_path)
+
+    assert document.kind == "picture" and document.pictures[0].status == "read with OCR"
+    assert document.pages[0].text == "Corridor 5-12\nClear width: 800 mm"
+    assert measurement_lines(document) == [("Corridor 5-12 | Clear width: 800 mm", 1)]
+    # The red mark goes where OCR found the line: pixels from the bottom left, with a small margin.
+    x0, y0, x1, y1 = lovable._locate(tmp_path, "deck_plan.png", 1, ["Clear width: 800 mm"])
+    assert (round(x0), round(y0), round(x1), round(y1)) == (94, 294, 606, 356)
+
+
+def test_a_file_that_is_not_a_picture_is_reported(tmp_path):
     document = read_document("deck plan.png", b"\x89PNG fake picture", tmp_path)
 
-    assert document.kind == "picture"
-    assert "2D reading" in document.pictures[0].status
-    assert (tmp_path / "deck_plan.png").exists()
+    assert document.kind == "picture" and not document.pages
+    assert "could not open this picture" in document.warnings[0]
 
 
 def test_unsupported_and_unsafe_names_are_handled(tmp_path):
@@ -85,7 +106,8 @@ def test_upload_returns_items_with_their_source(upload_dir, monkeypatch):
     assert body["items"][0]["source"] == "deck5.txt"
     # Mistral invented 750 mm: it is not in the document, so the value is dropped.
     assert all(item["value_text"] != "750 mm" for item in body["items"])
-    assert body["documents"][1]["pictures"][0]["status"].startswith("waiting for 2D reading")
+    # Not a real picture: it is reported, and the text file is still read.
+    assert any("could not open this picture" in warning for warning in body["warnings"])
 
 
 def test_upload_rejects_too_many_files(upload_dir):
@@ -134,3 +156,27 @@ def test_cut_off_answers_are_read_again_in_halves():
 
     assert [found[0]["value_text"] for _, found in parts] == ["800 mm", "850 mm", "1:10"]
     assert not warnings
+
+
+def test_ocr_keeps_each_label_with_the_line_below_it():
+    from backend.ocr import Line, reading_order
+
+    # Two labels side by side, as on a deck plan: top-to-bottom order would mix them.
+    lines = [
+        Line("Cabin 10045 door threshold", (0.05, 0.641, 0.21, 0.660)),
+        Line("Cabin 10038 light switch", (0.64, 0.637, 0.79, 0.665)),
+        Line("Raised threshold 8 mm", (0.05, 0.666, 0.18, 0.687)),
+        Line("Mounting height: 1275 mm", (0.65, 0.666, 0.80, 0.690)),
+    ]
+
+    assert [line.text for line in reading_order(lines)] == [
+        "Cabin 10038 light switch", "Mounting height: 1275 mm", "Cabin 10045 door threshold", "Raised threshold 8 mm",
+    ]
+
+
+def test_a_value_is_found_only_as_a_whole_number():
+    from backend.intake import _has_value
+
+    assert not _has_value("8 mm", "clear opening: 918 mm")
+    assert _has_value("8 mm", "raised threshold 8 mm")
+    assert _has_value("1:12", "running slope 1:12")

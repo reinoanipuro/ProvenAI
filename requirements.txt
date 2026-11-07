@@ -11,4 +11,5 @@ huggingface-hub
 numpy
 rank-bm25
 pillow
+onnxtr[cpu]
 python-multipart

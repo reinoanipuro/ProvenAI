@@ -1,5 +1,5 @@
 import { useRouterState } from "@tanstack/react-router";
-import { CheckerHeader } from "./CheckerHeader";
+import { SimpleTopBar } from "./SimpleHome";
 import { useEffect, type ReactNode } from "react";
 
 
@@ -10,7 +10,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const workspace = pathname === "/" || /^\/inspections\/[^/]+$/.test(pathname) && pathname !== "/inspections/new";
   useEffect(() => { document.documentElement.classList.remove("dark"); }, []);
   return <div className="checker-app">
-    {!workspace && <CheckerHeader title="PROVENAI"/>}
+    {!workspace && <SimpleTopBar/>}
     <main>{children}</main>
   </div>;
 }

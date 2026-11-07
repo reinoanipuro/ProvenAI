@@ -474,3 +474,33 @@ button, input, textarea, select, summary { border-radius: 0 !important; }
  .workflow-hint { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .primary-label { animation: none; } }
+
+/* ---------- Simple check pages (SimpleHome, SimpleResult): the drafting-sheet look in a plain layout. */
+.sheet { background: var(--card); border: 1px solid var(--foreground); }
+.sheet-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; padding: 4px 10px; border-bottom: 1px solid var(--foreground); background: var(--background); font: 600 13px var(--font-label); text-transform: uppercase; letter-spacing: .03em; }
+.sheet-label { font: 12px var(--font-label); text-transform: uppercase; letter-spacing: .03em; color: var(--muted-foreground); }
+.sheet-title { font: 600 24px/1.2 var(--font-label); text-transform: uppercase; letter-spacing: .01em; }
+.sheet-mono { font-family: var(--font-mono); }
+.sheet-rule { border-top: 2px solid var(--foreground); border-bottom: 1px solid var(--foreground); }
+.sheet-button { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px; border: 1px solid var(--foreground); background: var(--card); font: 600 13px var(--font-label); text-transform: uppercase; letter-spacing: .03em; cursor: pointer; }
+.sheet-button:hover { background: var(--foreground); color: var(--card); }
+.sheet-button[data-primary] { background: var(--foreground); color: var(--card); }
+.sheet-drop { border: 1px dashed var(--foreground); background: var(--card); transition: background-color 120ms; }
+.sheet-drop:hover, .sheet-drop[data-over] { background: var(--background); outline: 1px solid var(--foreground); outline-offset: -6px; }
+.sheet-tag { display: inline-block; min-width: 64px; padding: 1px 6px; border: 1px solid currentColor; font: 600 11px/16px var(--font-label); text-transform: uppercase; letter-spacing: .04em; text-align: center; }
+.sheet-step { border-bottom: 1px solid var(--border); }
+.sheet-step > button { width: 100%; display: flex; gap: 10px; align-items: flex-start; padding: 10px; text-align: left; }
+.sheet-step[data-open] { background: var(--background); box-shadow: inset 3px 0 0 var(--step-color, var(--foreground)); }
+.sheet-step-number { flex-shrink: 0; width: 24px; height: 24px; border: 1px solid var(--foreground); border-radius: 50%; font: 600 12px/22px var(--font-mono); text-align: center; }
+.sheet-quote { border-left: 2px solid var(--border); padding-left: 10px; color: var(--muted-foreground); }
+.sheet-doc-line { display: block; padding: 2px 8px; border: 1px solid transparent; font: 13px/1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sheet-doc-line[data-status] { cursor: pointer; }
+.sheet-doc-line[data-status="FAIL"] { border-color: var(--fail); background: color-mix(in srgb, var(--fail) 10%, transparent); }
+.sheet-doc-line[data-status="UNKNOWN"] { border-color: var(--unknown); border-style: dashed; background: color-mix(in srgb, var(--unknown) 8%, transparent); }
+.sheet-doc-line[data-status="PASS"] { border-color: var(--pass); }
+.sheet-doc-line[data-selected] { border-width: 2px; }
+.sheet-tab { height: 30px; padding: 0 12px; border-right: 1px solid var(--foreground); font: 13px var(--font-label); white-space: nowrap; }
+.sheet-tab[aria-selected="true"] { background: var(--card); font-weight: 600; box-shadow: inset 0 -2px 0 var(--foreground); }
+@keyframes sheet-spin { to { transform: rotate(360deg); } }
+.sheet-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: sheet-spin 900ms linear infinite; }
+@media print { .sheet-noprint { display: none !important; } }

@@ -209,7 +209,7 @@ def design_check_tab(attributes: dict) -> None:
                     "File": document["filename"],
                     "Type": document["kind"],
                     "Pages with text": document["text_pages"],
-                    "Pictures waiting for 2D reading": len(document["pictures"]),
+                    "Pictures read with OCR": len(document["pictures"]),
                 }
                 for document in documents
             ]),

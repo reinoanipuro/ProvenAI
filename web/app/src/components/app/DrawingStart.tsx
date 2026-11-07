@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from '@tanstack/react-router';
+import { Link, useNavigate } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
 import { CheckerHeader } from './CheckerHeader';
 import { CheckerWorkspace } from './CheckerWorkspace';
 import { DrawingViewer } from './DrawingViewer';
-import { api, DEMO_ID } from '@/lib/api';
+import { api, DEMO_ID, isDemo } from '@/lib/api';
 import reference from '@/assets/rcrv-deck01-cabins.png.asset.json';
 
 export function DrawingStart({ calibrate }: { calibrate: boolean }) {
   const [loaded,setLoaded] = useState(false), [loading,setLoading] = useState(false), [lines,setLines] = useState<string[]>([]), [over,setOver] = useState(false);
   const [file,setFile] = useState<{name:string;url:string}|null>(null), [message,setMessage] = useState('');
-  const input = useRef<HTMLInputElement>(null);
+  const input = useRef<HTMLInputElement>(null), navigate = useNavigate();
   useEffect(() => () => { if(file) URL.revokeObjectURL(file.url); }, [file]);
   useEffect(() => { const listener = (event: Event) => { if((event as CustomEvent<string>).detail==='load') { setLoaded(false); setFile(null); } }; window.addEventListener('checker-command',listener); return()=>window.removeEventListener('checker-command',listener); }, []);
   async function loadTest() {
@@ -27,19 +27,30 @@ export function DrawingStart({ calibrate }: { calibrate: boolean }) {
       await new Promise(resolve=>window.setTimeout(resolve,500)); setLoaded(true);
     } catch { setMessage('Test drawing could not be loaded. Try again.'); } finally { setLoading(false); }
   }
+  async function checkDocument(next: File) {
+    setLoading(true); setMessage(''); setLines([`Sending ${next.name} to the inspection service …`]);
+    try {
+      const { id } = await api.checkDocuments(next.name.replace(/\.[^.]+$/, ''), [next]);
+      await navigate({ to: '/inspections/$id', params: { id } });
+    } catch {
+      setMessage('The inspection service could not be reached, so nothing was checked. Start the backend and check the API address in Settings.');
+    } finally { setLoading(false); }
+  }
   function openFile(files: FileList | null) {
     const next = files?.[0]; if(!next) return;
+    // With the service connected, a document is checked and its findings are marked on it.
+    if(!isDemo() && /\.(pdf|docx|txt|md|csv)$/i.test(next.name)) { void checkDocument(next); return; }
     if(next.name.toLowerCase().endsWith('.pdf')) { setFile({name:next.name,url:URL.createObjectURL(next)}); setMessage('PDF preview only. Evidence extraction requires the connected inspection service; no test findings are applied to your file.'); }
     else if(/\.(ifc|json)$/i.test(next.name)) setMessage('IFC and design JSON extraction require the connected inspection service. Open a new inspection to send this file. Demo mode does not extract uploaded files.');
     else setMessage('Choose a PDF, IFC or design JSON file.');
   }
   if(loaded) return <CheckerWorkspace id={DEMO_ID} calibrate={calibrate} loadLines={lines}/>;
   return <div className="drawing-start no-print">
-    <input hidden ref={input} type="file" accept=".pdf,.ifc,.json" onChange={e=>{openFile(e.target.files);e.target.value='';}}/>
+    <input hidden ref={input} type="file" accept=".pdf,.docx,.txt,.md,.csv,.ifc,.json" onChange={e=>{openFile(e.target.files);e.target.value='';}}/>
     <CheckerHeader loaded={!!file} title={file?.name} running={loading} onLoad={loadTest}/>
     <section className={`empty-sheet ${over?'drag-over':''}`} aria-label="Drawing drop zone" onDragOver={e=>{e.preventDefault();setOver(true);}} onDragLeave={e=>{if(!e.currentTarget.contains(e.relatedTarget as Node))setOver(false);}} onDrop={e=>{e.preventDefault();setOver(false);openFile(e.dataTransfer.files);}}>
       {file ? <><header className="canvas-heading">DRAWING · {file.name}<Button variant="ghost" onClick={()=>setFile(null)}>CLOSE</Button></header><DrawingViewer compact elements={[]} results={[]} selectedElementId={null} onSelectElement={()=>{}} pdfUrl={file.url} fileName={file.name}/><div className="file-preview-message">{message} <Button asChild variant="outline"><Link to="/inspections/new">NEW INSPECTION</Link></Button></div></> : <>
-      <div className="empty-sheet-copy"><h1>NO DRAWING LOADED</h1><p>Drop a general arrangement drawing here (PDF, IFC or design JSON)</p><div><Button variant="ghost" onClick={()=>input.current?.click()} aria-label="Browse drawing files">OPEN FILE</Button></div>{message && <p role="status">{message} <Link to="/inspections/new">New inspection</Link></p>}</div>
+      <div className="empty-sheet-copy"><h1>NO DRAWING LOADED</h1><p>Drop a design document or drawing here (PDF, Word or text). It is checked, and the issues are marked in red on the document.</p><div><Button variant="ghost" onClick={()=>input.current?.click()} aria-label="Browse drawing files">OPEN FILE</Button></div>{message && <p role="status">{message} <Link to="/inspections/new">New inspection</Link></p>}</div>
       {loading && <aside className="loading-margin"><h2>CHECKER'S NOTES</h2>{lines.map(line=><p key={line}>{line}</p>)}</aside>}
       <table className="drawing-title-block" aria-label="Empty drawing title block"><tbody>{['VESSEL','DRAWING','REV'].map(label=><tr key={label}><td>{label}</td><td>—</td></tr>)}</tbody></table>
       </>}

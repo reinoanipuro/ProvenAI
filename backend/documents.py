@@ -1,12 +1,13 @@
 """Read dropped design documents: text files, PDFs, Word files and 2D pictures.
 
 Text is extracted here. Pictures, and PDF pages without a text layer such as
-scanned drawings, are stored and listed as waiting for 2D reading, which is a
-later step: read_picture() is the place to add it. The local model
-(ministral-3:8b) supports images, so that step needs no new model.
+scanned drawings, are read with local OCR (backend/ocr.py). The position of
+every OCR line is saved next to the file as "<file>.ocr.json", so a finding
+can be marked where its value is printed.
 """
 
 import io
+import json
 import re
 import uuid
 import zipfile
@@ -25,6 +26,8 @@ MAX_FILE_BYTES = 25 * 1024 * 1024
 MIN_PAGE_TEXT = 40
 # A label this short before a value, like "Clear width:", needs the line above for its element.
 SHORT_LABEL = 30
+# Scanned PDF pages are rendered at this scale for OCR (2 = 144 dpi).
+OCR_RENDER_SCALE = 2
 # A ratio like 1:50 or steeper denominators is a drawing scale, not a slope (slopes are about 1:8 to 1:20).
 MIN_SCALE_DENOMINATOR = 50
 _SPLIT_SQUARE_METRE = re.compile(r"(\d)\s*m\s*\n\s*2(?!\d)")
@@ -42,13 +45,14 @@ _WORD_NAMESPACE = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main
 class Page:
     number: int | None
     text: str
+    read_by: str = "text"
 
 
 @dataclass
 class Picture:
     page: int | None
     stored_as: str
-    status: str = "waiting for 2D reading (not available yet)"
+    status: str = "read with OCR"
 
 
 @dataclass
@@ -121,7 +125,18 @@ def read_document(filename: str, data: bytes, folder: Path) -> Document:
 
     if suffix in PICTURE_TYPES:
         document = Document(name, "picture")
-        document.pictures.append(Picture(None, _store(folder, name, data)))
+        stored = _store(folder, name, data)
+        try:
+            from PIL import Image
+
+            image = Image.open(io.BytesIO(data))
+            image.load()
+        except Exception:  # noqa: BLE001 - any unreadable picture gets the same warning
+            document.warnings.append(f"{name}: could not open this picture.")
+            return document
+        picture = Picture(1, stored)
+        document.pictures.append(picture)
+        _ocr_pages(document, folder, name, [(1, image)])
         return document
 
     return _read_pdf(name, data, folder)
@@ -138,6 +153,7 @@ def _read_pdf(name: str, data: bytes, folder: Path) -> Document:
         return document
     try:
         stored = None
+        scanned = []
         for index in range(len(pdf)):
             page = pdf[index]
             textpage = page.get_textpage()
@@ -149,19 +165,43 @@ def _read_pdf(name: str, data: bytes, folder: Path) -> Document:
             else:
                 stored = stored or _store(folder, name, data)
                 document.pictures.append(Picture(index + 1, stored))
+                scanned.append((index + 1, pdf[index].render(scale=OCR_RENDER_SCALE).to_pil()))
     finally:
         pdf.close()
-    if document.pictures:
-        document.warnings.append(
-            f"{name}: {len(document.pictures)} page(s) have no text, such as drawings or scans. "
-            "They are stored for 2D reading, which is not available yet."
-        )
+    if scanned:
+        _ocr_pages(document, folder, name, scanned)
     return document
 
 
-def read_picture(picture: Picture) -> str:
-    """The place for 2D reading of drawings and pictures. Not available yet."""
-    raise NotImplementedError("2D picture reading is a later step.")
+def _ocr_pages(document: Document, folder: Path, name: str, images: list[tuple[int, object]]) -> None:
+    """Read pictures with OCR, and save where each line is for marking findings."""
+    from .ocr import OCRUnavailableError, read_lines
+
+    positions: dict[str, list] = {}
+    for number, image in images:
+        try:
+            lines = read_lines(image)
+        except OCRUnavailableError as error:
+            document.warnings.append(f"{name}: page {number} is a picture and could not be read: {error}")
+            for picture in document.pictures:
+                picture.status = "not read: OCR unavailable"
+            return
+        positions[str(number)] = [[line.text, *line.box] for line in lines]
+        document.pages.append(Page(number, "\n".join(line.text for line in lines), read_by="ocr"))
+        if not lines:
+            document.warnings.append(f"{name}: no text was found on page {number}.")
+    document.pages.sort(key=lambda page: page.number or 0)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{name}.ocr.json").write_text(json.dumps(positions), encoding="utf-8")
+
+
+def ocr_positions(folder: Path, name: str) -> dict[str, list]:
+    """OCR lines per page saved by _ocr_pages: {page: [[text, x0, y0, x1, y1], ...]}, or {}."""
+    path = folder / f"{name}.ocr.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
 
 
 def measurement_lines(document: Document) -> list[tuple[str, int | None]]:

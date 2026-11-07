@@ -7,6 +7,8 @@ export interface Evidence {
   attr?: string | undefined;
   value: number | null;
   unit: string;
+  /** The value as written in the design, such as "1:12" or "800 mm". */
+  value_text?: string | undefined;
   confidence: Confidence;
   quote: string;
   source_file: string;
@@ -53,6 +55,8 @@ export interface Result {
   recommendation: string;
   missing: string[];
   evidence: Evidence[];
+  /** Regulation passages the result is based on: file, page and the quoted text. */
+  sources?: RegulationSource[] | undefined;
   audit: AuditEvent[];
 }
 export interface Question {
@@ -79,6 +83,13 @@ export interface Inspection {
   results: Result[];
   questions: Question[];
   previous_revision?: { id: string; label: string };
+  /** Python's summary at first, replaced by Mistral's once its numbers are checked. */
+  summary?: { text: string; source: "mistral" | "python"; note?: string } | null;
+  next_steps?: NextStep[];
+  warnings?: string[];
+  /** True while Mistral writes the summary and reads regulations after the result is shown. */
+  refining?: boolean;
+  duration_s?: number;
 }
 export interface InspectionSummary {
   id: string;
@@ -118,3 +129,23 @@ export interface Rule {
   status: "approved" | "proposed";
 }
 export interface Answer { attr: string; element_id: string; value: number }
+export interface RegulationSource {
+  filename: string;
+  page: number | null;
+  section: string;
+  quote: string;
+  /** The quote was confirmed word for word on the regulation page. */
+  verified: boolean;
+  /** Only the closest passage found, not a confirmed requirement. */
+  closest: boolean;
+}
+export type StepKind = "fix" | "confirm" | "check" | "measure" | "recheck" | "info";
+export interface NextStep {
+  number: number;
+  kind: StepKind;
+  title: string;
+  detail: string;
+  result_ids: string[];
+  element_id: string | null;
+  source: RegulationSource | null;
+}

@@ -55,12 +55,27 @@ export const api = {
       },
       () => mock.createInspection(name, files, ruleSetIds),
     ),
+  /** Send documents to the live inspection service. Never falls back to demo data: a failure throws, so results always come from the user's own files. */
+  async checkDocuments(name: string, files: File[]): Promise<{ id: string }> {
+    const fd = new FormData();
+    fd.append("name", name);
+    files.forEach((f) => fd.append("files", f));
+    return j<{ id: string }>(`${base()}/inspections`, { method: "POST", body: fd });
+  },
+  /** One inspection, without the demo fallback in live mode: a failure throws instead of showing someone else's findings. */
+  liveInspection: (id: string): Promise<Inspection> => (isDemo() ? mock.getInspection(id) : j<Inspection>(`${base()}/inspections/${id}`)),
   submitAnswers: (id: string, answers: Answer[]) =>
     call<Inspection>((b) => post(`${b}/inspections/${id}/answers`, { answers }), () => mock.submitAnswers(id, answers)),
   markReviewed: (id: string, rid: string) =>
     call<Inspection>((b) => post(`${b}/inspections/${id}/results/${encodeURIComponent(rid)}/review`, {}), () => mock.markReviewed(id, rid)),
   addNote: (id: string, rid: string, note: string) =>
     call<Inspection>((b) => post(`${b}/inspections/${id}/results/${encodeURIComponent(rid)}/notes`, { note }), () => mock.addNote(id, rid, note)),
+  /** The text of an uploaded text or Word file, to show it with the issues marked. */
+  fileText: (id: string, fileId: string) =>
+    j<{ pages: { page: number | null; text: string }[] }>(`${base()}/inspections/${id}/files/${fileId}/text`),
+  /** The regulation page as an image with the quote highlighted; null in demo mode. */
+  regulationPageUrl: (filename: string, page: number, quote: string) =>
+    isDemo() ? null : `${base().replace(/\/lovable$/, "")}/source/page?filename=${encodeURIComponent(filename)}&page=${page}&quote=${encodeURIComponent(quote.slice(0, 1500))}`,
   /** URL of an original file for the drawing viewer; null in demo mode. */
   fileUrl: (id: string, fileId: string) => (isDemo() ? null : `${base()}/inspections/${id}/files/${fileId}`),
 };

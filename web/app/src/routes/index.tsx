@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { DrawingStart } from "@/components/app/DrawingStart";
+import { SimpleHome } from "@/components/app/SimpleHome";
 export const Route = createFileRoute("/")({
-  validateSearch: (search: Record<string, unknown>): { calibrate?: string } => ({ calibrate: String(search["calibrate"] ?? "") }),
   head: () => ({ meta: [
     { title: "Check a ship design — ProvenAI" },
     { name: "description", content: "Check a ship drawing against engineering rules. See door violations on the drawing and what needs more information." },
@@ -11,4 +10,4 @@ export const Route = createFileRoute("/")({
   ] }), component: DesignCheck,
 });
 
-function DesignCheck() { const { calibrate } = Route.useSearch(); return <DrawingStart calibrate={calibrate === "1"}/>; }
+function DesignCheck() { return <SimpleHome/>; }

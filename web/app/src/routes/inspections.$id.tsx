@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { CheckerWorkspace } from "@/components/app/CheckerWorkspace";
+import { SimpleResult } from "@/components/app/SimpleResult";
 export const Route = createFileRoute("/inspections/$id")({
   validateSearch: (search: Record<string, unknown>): { calibrate?: string } => ({ calibrate: String(search["calibrate"] ?? "") }),
   head: () => ({
@@ -15,4 +15,4 @@ export const Route = createFileRoute("/inspections/$id")({
   component: InspectionPage,
 });
 
-function InspectionPage() { const { id } = Route.useParams(); const { calibrate } = Route.useSearch(); return <CheckerWorkspace id={id} calibrate={calibrate === "1"} initialChecked/>; }
+function InspectionPage() { const { id } = Route.useParams(); return <SimpleResult id={id}/>; }
