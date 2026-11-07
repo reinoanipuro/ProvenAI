@@ -10,3 +10,5 @@ tokenizers
 huggingface-hub
 numpy
 rank-bm25
+pillow
+python-multipart
