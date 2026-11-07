@@ -113,8 +113,8 @@ export function PdfView({ url, marks, selected, onSelect }: { url: string; marks
           {image && <image href={image.src} x={0} y={0} width={W} height={H} />}
           {onPage.map((mark) => {
             const [x0, y0, x1, y1] = mark.bbox, color = COLOR[mark.status], active = mark.id === selected;
-            return <rect key={mark.id} x={x0} y={H - y1} width={x1 - x0} height={y1 - y0} rx={3} fill={color} fillOpacity={active ? 0.18 : 0.1}
-              stroke={color} strokeWidth={active ? 4 : 2} vectorEffect="non-scaling-stroke" className="cursor-pointer"
+            return <rect key={mark.id} x={x0} y={H - y1} width={x1 - x0} height={y1 - y0} rx={1.5} fill={color} fillOpacity={active ? 0.16 : 0.07}
+              stroke={color} strokeWidth={active ? 2.5 : 1.25} vectorEffect="non-scaling-stroke" className="cursor-pointer"
               onPointerDown={(e) => e.stopPropagation()} onClick={() => onSelect(mark.id)}><title>{mark.status === "FAIL" ? "Issue" : mark.status === "PASS" ? "OK" : "To check"}</title></rect>;
           })}
         </svg>}

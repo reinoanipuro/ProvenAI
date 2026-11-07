@@ -271,7 +271,7 @@ def _locate(folder: Path, filename: str, page: int | None, texts: list[str]) -> 
             return None
     finally:
         document.close()
-    margin = 8.0
+    margin = 1.5
     return [
         min(box[0] for box in boxes) - margin, min(box[1] for box in boxes) - margin,
         max(box[2] for box in boxes) + margin, max(box[3] for box in boxes) + margin,
@@ -330,6 +330,7 @@ def _build_elements(state: dict, items: list[dict], folder: Path) -> list[dict]:
             # can appear several times on a page, the full line rarely does.
             line = (item.get("source_line") or "").split(" | ")[-1].strip()
             box = _locate(folder, item["source_file"], item.get("source_page"), [line, item["value_text"]])
+            evidence["bbox"] = box
             if box and element["bbox"] == [0, 0, 0, 0]:
                 element["bbox"], element["page"] = box, item["source_page"]
             elif box and element["page"] == item["source_page"]:
