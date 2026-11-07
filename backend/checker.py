@@ -9,18 +9,13 @@ import json
 import re
 
 from . import llm as llm_module
-from .rag import load_catalog
+from .rag import load_catalog, normalize_quote
 from .rules import LibraryRule, evaluate, load_library
 
 NO_RULE = "NO_RULE"
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+_normalize = normalize_quote
 _SMALL_COUNTS = {str(number) for number in range(0, 21)}
-
-
-def _normalize(text: str) -> str:
-    text = text.replace("’", "'").replace("“", '"').replace("”", '"')
-    text = text.replace("–", "-").replace("—", "-").replace(" ", " ")
-    return re.sub(r"\s+", " ", text).strip().lower()
 
 
 def accept_items(items: list[dict], text: str | None, attributes: dict) -> tuple[list[dict], list[str]]:
@@ -64,18 +59,15 @@ def verify_citation(rule: LibraryRule, retriever) -> dict:
         citation["reason"] = "Regulation search is not available, so the quote was not checked."
         return citation
 
-    quote = _normalize(source.quote)
-    for result in retriever.search(source.quote, top_k=5):
-        same_file = result["filename"] == source.filename
-        on_page = result["page"] <= source.page <= result.get("page_end", result["page"])
-        if same_file and on_page and quote in _normalize(result["text"]):
-            citation.update(
-                verified=True,
-                reason="Quote found on the cited page.",
-                chunk_id=result.get("chunk_id"),
-                passage=result["text"],
-            )
-            return citation
+    passage = retriever.find_passage(source.filename, source.page, source.quote)
+    if passage is not None:
+        citation.update(
+            verified=True,
+            reason="Quote found on the cited page.",
+            chunk_id=passage.get("chunk_id"),
+            passage=passage["text"],
+        )
+        return citation
     citation["reason"] = "The quote was not found on the cited page of the indexed document."
     return citation
 
