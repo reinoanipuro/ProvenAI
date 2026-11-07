@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { api, qk, type Inspection, type InspectionFile, type NextStep, type RegulationSource, type Result, type ShipElement, type Status, type StepKind } from "@/lib/api";
+import { api, qk, type Inspection, type LiveReading, type InspectionFile, type NextStep, type RegulationSource, type Result, type ShipElement, type Status, type StepKind } from "@/lib/api";
 import { PageTitle } from "./AppShell";
 import { PdfView, type Mark } from "./PdfView";
 
@@ -74,6 +74,59 @@ function StopButton({ insp, label }: { insp: Inspection; label: string }) {
   </button>;
 }
 
+/** Mistral reading the document live: its value lines, the part being read, and each value Python kept or rejected. */
+function Live({ live }: { live: LiveReading }) {
+  const list = useRef<HTMLOListElement>(null);
+  const byLine = useMemo(() => {
+    const map = new Map<number, LiveReading["found"]>();
+    for (const f of live.found) if (f.line != null && f.kept) map.set(f.line, [...(map.get(f.line) ?? []), f]);
+    return map;
+  }, [live.found]);
+  const kept = live.found.filter((f) => f.kept).length, rejected = live.found.filter((f) => !f.kept);
+  const finished = live.reading == null && live.found.length > 0;
+  // Keep the part being read in view.
+  useEffect(() => {
+    const first = list.current?.querySelector<HTMLElement>('[data-state="reading"]');
+    if (first && list.current) list.current.scrollTo({ top: first.offsetTop - list.current.offsetTop - 8, behavior: "smooth" });
+  }, [live.reading]);
+  const counters: [string, number, (string | undefined)?][] = [
+    ["Value lines", live.lines.length], ["Found by Mistral", live.found.length],
+    ["Kept by Python", kept, "var(--pass)"], ["Rejected", rejected.length, rejected.length ? "var(--fail)" : undefined],
+  ];
+  return <div className="border-t border-[var(--foreground)]">
+    <div className="flex flex-wrap items-center justify-between gap-3 bg-[var(--background)] px-4 py-2">
+      <span className="sheet-label flex items-center gap-2">
+        {live.reading != null && <span className="status-dot" data-live style={{ ["--dot" as string]: "var(--unknown)" }} />}
+        {live.reading != null ? `Mistral is reading part ${live.reading + 1} of ${live.parts}` : finished ? "Reading done · Python checks the values" : "Preparing the value lines"}
+      </span>
+      <span className="flex gap-5">{counters.map(([label, n, color]) => <span key={label} className="text-right">
+        <span className="sheet-mono block text-[20px] font-semibold leading-none" style={{ color }}>{n}</span>
+        <span className="sheet-label text-[10px]">{label}</span>
+      </span>)}</span>
+    </div>
+    <ol ref={list} className="max-h-[46vh] overflow-y-auto py-1">
+      {live.lines.map((line, index) => {
+        const state = live.reading == null ? (live.found.length ? "done" : "waiting") : line.part < live.reading ? "done" : line.part === live.reading ? "reading" : "waiting";
+        const findings = byLine.get(index) ?? [];
+        return <li key={index} className="live-line" data-state={state}>
+          <span className="sheet-mono w-7 shrink-0 text-right text-[11px] text-[var(--muted-foreground)]">{index + 1}</span>
+          <span className="sheet-mono min-w-0 flex-1 truncate text-[12.5px]" title={line.text}>{line.text}</span>
+          <span className="flex shrink-0 flex-wrap justify-end gap-1">
+            {findings.map((f, i) => <span key={i} className="sheet-chip sheet-reveal" style={{ borderColor: "var(--pass)" }} title={`${f.element}: found in the text, kept`}>
+              <span style={{ color: "var(--pass)" }}>✓</span>{f.value_text}
+            </span>)}
+            {state === "reading" && !findings.length && <span className="text-[11px] text-[var(--muted-foreground)]">reading …</span>}
+          </span>
+        </li>;
+      })}
+    </ol>
+    {rejected.length > 0 && <div className="sheet-reveal border-t border-[var(--border)] px-4 py-2 text-xs">
+      <span className="sheet-label mr-2" style={{ color: "var(--fail)" }}>Rejected by Python · not in your text</span>
+      {rejected.map((f, i) => <span key={i} className="sheet-chip mr-1.5"><span className="line-through" style={{ color: "var(--fail)" }}>{f.value_text}</span><span className="text-[var(--muted-foreground)]">{f.element}</span></span>)}
+    </div>}
+  </div>;
+}
+
 function Progress({ insp }: { insp: Inspection }) {
   return <section className="sheet mt-4">
     <div className="sheet-heading"><span>Checking · {insp.name}</span><span className="flex items-center gap-3"><span className="sheet-spinner" aria-hidden /><StopButton insp={insp} label="Stop check" /></span></div>
@@ -89,6 +142,7 @@ function Progress({ insp }: { insp: Inspection }) {
         </li>;
       })}
     </ol>
+    {insp.live?.lines?.length ? <Live live={insp.live} /> : null}
     <p className="border-t border-[var(--border)] px-4 py-2 text-xs text-[var(--muted-foreground)]">The result is shown as soon as Python has checked the values. The AI summary follows a moment later. This page updates by itself.</p>
   </section>;
 }
@@ -418,28 +472,111 @@ function Evidence({ group, onShow }: { group: Group; onShow: (g: Group) => void 
       {r.required && <Row label="Required"><span className="sheet-mono">{r.required} {r.unit}</span></Row>}
       {r.reason && <Row label="Python">{r.reason}</Row>}
     </tbody></table>
-    {doc?.quote && <p><span className="sheet-label">In your document</span><br /><span className="sheet-mono text-[13px]">“{doc.quote}”</span> <span className="text-xs text-[var(--muted-foreground)]">{doc.source_file}{doc.page ? `, page ${doc.page}` : ""}</span>
-      {" "}<button type="button" className="sheet-noprint text-xs underline" onClick={() => onShow(group)}>Show in the document</button></p>}
-    <div><span className="sheet-label">Regulation</span>
-      <ul className="mt-1 space-y-2">{distinctRules(group.results).map((rule) => <li key={rule.id}>
-        <span className="font-semibold" style={{ color: COLOR[rule.status] }}>{rule.status === "FAIL" ? "Not met" : rule.status === "PASS" ? "Met" : "Not checked"}</span>
-        {" · "}{rule.clause_ref.split(" · ")[0]}
-        {(rule.sources ?? []).slice(0, rule.sources?.[0]?.closest ? 2 : 1).map((source, index) => source.filename && source.page != null ? <RegulationPage key={index} source={source} /> : null)}
-      </li>)}</ul>
+    <Gauge group={group} />
+    <div className="grid gap-2">
+      <div className="border border-[var(--border)] bg-[var(--card)] p-2">
+        <p className="sheet-label">In your document</p>
+        {doc?.quote ? <>
+          <p className="sheet-mono mt-1 text-[13px] leading-relaxed">“<Highlight text={doc.quote} needles={valueNeedles(measuredText(group))} color={COLOR[group.status]} />”</p>
+          <p className="mt-1 text-xs text-[var(--muted-foreground)]">{doc.source_file}{doc.page ? `, page ${doc.page}` : ""}
+            {" · "}<button type="button" className="sheet-noprint underline" onClick={() => onShow(group)}>Show in the document</button></p>
+        </> : <p className="mt-1 text-xs text-[var(--muted-foreground)]">No text quote for this value.</p>}
+      </div>
+      <div className="min-w-0">
+        <p className="sheet-label">Regulation</p>
+        <ul className="space-y-2">{distinctRules(group.results).map((rule) => <li key={rule.id}>
+          <span className="text-xs"><span className="font-semibold" style={{ color: COLOR[rule.status] }}>{rule.status === "FAIL" ? "Not met" : rule.status === "PASS" ? "Met" : "Not checked"}</span>
+          {" · "}{rule.clause_ref.split(" · ")[0]}</span>
+          {(rule.sources ?? []).slice(0, rule.sources?.[0]?.closest ? 2 : 1).map((source, index) => source.filename && source.page != null
+            ? <RegulationPage key={index} source={source} needles={limitNeedles(rule)} /> : null)}
+        </li>)}</ul>
+      </div>
     </div>
   </div>;
 }
 
-function RegulationPage({ source }: { source: RegulationSource }) {
+/** Numbers to highlight in the design text: the value as written, then its numbers. */
+function valueNeedles(valueText: string): string[] {
+  return [valueText, ...(valueText.match(/\d+(?:[.,]\d+)?/g) ?? [])].filter((n) => n && n !== "not stated");
+}
+/** Numbers to highlight in the regulation quote: the limit of the rule. */
+function limitNeedles(rule: Result): string[] {
+  return (rule.required.match(/\d+(?:[.,]\d+)?/g) ?? []).filter((n) => n.length > 1 || Number(n) > 0);
+}
+
+/** The text with the given values marked, whole numbers only ("915" not inside "9150"). */
+function Highlight({ text, needles, color }: { text: string; needles: string[]; color: string }) {
+  const escaped = [...new Set(needles)].filter(Boolean).sort((a, b) => b.length - a.length).map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!escaped.length) return <>{text}</>;
+  const pattern = new RegExp(`(?<![\\d.,])(${escaped.join("|")})(?![\\d])`, "g");
+  const parts: ReactNode[] = [];
+  let last = 0;
+  for (const match of text.matchAll(pattern)) {
+    const at = match.index ?? 0;
+    parts.push(text.slice(last, at), <mark key={at} className="evidence-mark" style={{ ["--mark" as string]: color }}>{match[0]}</mark>);
+    last = at + match[0].length;
+  }
+  parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
+/** The design value against the limits, drawn as a dimension line: allowed range, limit ticks, the value and the gap. */
+function Gauge({ group }: { group: Group }) {
+  const value = group.main.measured;
+  const limits = distinctRules(group.results).flatMap((rule) => {
+    const match = rule.required.match(/^\s*([≥≤><=])\s*(-?\d+(?:\.\d+)?)/);
+    return match ? [{ op: match[1]!, at: Number(match[2]), unit: rule.unit }] : [];
+  }).filter((l, i, all) => all.findIndex((x) => x.op === l.op && x.at === l.at) === i);
+  if (value == null || !limits.length) return null;
+  const unit = limits[0]!.unit;
+  const low = limits.filter((l) => l.op === "≥" || l.op === ">").map((l) => l.at), high = limits.filter((l) => l.op === "≤" || l.op === "<").map((l) => l.at);
+  const min = low.length ? Math.max(...low) : null, max = high.length ? Math.min(...high) : null;
+  const points = [value, ...limits.map((l) => l.at)];
+  const span = Math.max(...points) - Math.min(...points) || Math.abs(value) || 1;
+  const from = Math.min(...points) - span * 0.35, to = Math.max(...points) + span * 0.35;
+  const W = 520, x = (v: number) => 20 + ((v - from) / (to - from)) * (W - 40);
+  const color = COLOR[group.status];
+  const fmt = (n: number) => `${Number.isInteger(n) ? n : n.toFixed(2).replace(/\.?0+$/, "")}`;
+  // The gap to the limit it breaks, or the margin to the nearest limit when it passes.
+  const broken = min != null && value < min ? min : max != null && value > max ? max : null;
+  const nearest = broken ?? [min, max].filter((n): n is number => n != null).sort((a, b) => Math.abs(a - value) - Math.abs(b - value))[0]!;
+  const gap = value - nearest;
+  const allowedFrom = min != null ? x(min) : 20, allowedTo = max != null ? x(max) : W - 20;
+  return <figure className="border border-[var(--border)] bg-[var(--card)] px-2 pt-1">
+    <figcaption className="sheet-label flex justify-between"><span>Design value against the limit</span>
+      <span className="sheet-mono normal-case" style={{ color }}>{broken != null ? `${gap > 0 ? "+" : "−"}${fmt(Math.abs(gap))} ${unit} ${gap > 0 ? "over" : "under"} the limit` : `${fmt(Math.abs(gap))} ${unit} margin`}</span></figcaption>
+    <svg viewBox={`0 0 ${W} 74`} className="block w-full" role="img" aria-label={`Design ${fmt(value)} ${unit}; required ${limits.map((l) => `${l.op} ${fmt(l.at)}`).join(" and ")} ${unit}`}>
+      <defs><pattern id={`hatch-${group.id.replace(/\W/g, "")}`} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <line x1="0" y1="0" x2="0" y2="6" stroke="var(--pass)" strokeWidth="1.2" strokeOpacity="0.45" /></pattern></defs>
+      <rect x={allowedFrom} y={30} width={Math.max(0, allowedTo - allowedFrom)} height={14} fill={`url(#hatch-${group.id.replace(/\W/g, "")})`} />
+      <line x1={20} x2={W - 20} y1={44} y2={44} stroke="var(--foreground)" strokeWidth={1} />
+      {limits.map((l, i) => <g key={i}>
+        <line x1={x(l.at)} x2={x(l.at)} y1={24} y2={50} stroke="var(--foreground)" strokeWidth={1.5} />
+        <text x={x(l.at)} y={64} textAnchor="middle" fontSize={11} style={{ fontFamily: "var(--font-mono)" }} fill="var(--foreground)">{l.op} {fmt(l.at)}</text>
+      </g>)}
+      {nearest !== value && <g stroke={color} strokeWidth={1.2}>
+        <line x1={x(Math.min(value, nearest))} x2={x(Math.max(value, nearest))} y1={14} y2={14} />
+        <path d={`M${x(value)} 10v8M${x(nearest)} 10v8`} />
+      </g>}
+      <g className="gauge-value">
+        <path d={`M${x(value)} 44l-6 -11h12z`} fill={color} />
+        <line x1={x(value)} x2={x(value)} y1={20} y2={44} stroke={color} strokeWidth={2} />
+        <text x={x(value)} y={64} textAnchor="middle" fontSize={12} fontWeight={600} style={{ fontFamily: "var(--font-mono)" }} fill={color} dy={limits.some((l) => Math.abs(x(l.at) - x(value)) < 40) ? 9 : 0}>{fmt(value)} {unit}</text>
+      </g>
+    </svg>
+  </figure>;
+}
+
+function RegulationPage({ source, needles = [] }: { source: RegulationSource; needles?: string[] }) {
   const [shown, setShown] = useState(false);
   const url = source.page != null ? api.regulationPageUrl(source.filename, source.page, source.verified ? source.quote : "") : null;
   return <div className="mt-1 border border-[var(--border)] bg-[var(--card)]">
     <div className="flex flex-wrap items-center justify-between gap-2 px-2 py-1.5">
-      <span className="text-xs"><span className="sheet-mono">{source.filename}</span> · <strong>page {source.page}</strong>{source.section ? ` · ${source.section}` : ""}
+      <span className="min-w-0 text-xs"><span className="sheet-mono break-all">{source.filename}</span> · <strong>page {source.page}</strong>{source.section ? ` · ${source.section}` : ""}
         <br /><span className="text-[var(--muted-foreground)]">{source.closest ? "Closest passage found: not a confirmed requirement" : source.verified ? "Quote confirmed word for word on this page" : "Quote not confirmed in the index"}</span></span>
       {url && <button type="button" className="sheet-button sheet-noprint h-7 px-2 text-[11px]" onClick={() => setShown(!shown)}>{shown ? "Hide page" : `Show page ${source.page}`}</button>}
     </div>
-    {source.quote && <blockquote className="sheet-quote mx-2 mb-2 text-xs">{source.quote.length > 400 ? `${source.quote.slice(0, 400)} …` : source.quote}</blockquote>}
+    {source.quote && <blockquote className="sheet-quote mx-2 mb-2 text-xs"><Highlight text={source.quote.length > 400 ? `${source.quote.slice(0, 400)} …` : source.quote} needles={source.closest ? [] : needles} color="var(--foreground)" /></blockquote>}
     {shown && url && <div className="border-t border-[var(--border)]">
       <a href={url} target="_blank" rel="noreferrer" title="Open the full page"><img src={url} alt={`${source.filename} page ${source.page}, the quote is highlighted`} className="block w-full" loading="lazy" /></a>
     </div>}

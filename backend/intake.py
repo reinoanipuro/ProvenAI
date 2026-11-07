@@ -56,15 +56,35 @@ def _read_part(llm, text: str, attributes: dict, warnings: list[str], depth: int
         return [result for half in halves for result in _read_part(llm, half, attributes, warnings, depth + 1)]
 
 
+def _live_findings(found: list[dict], accepted: list[dict], lines: list, part_of: list[int], part_index: int) -> list[dict]:
+    """What one part gave: each value Mistral returned, whether Python kept it, and its line."""
+    kept = {(item["element"], item["value_text"]) for item in accepted if item["value_text"]}
+    out = []
+    for item in found:
+        element = (item.get("element") or "").strip() or "design item"
+        value_text = (item.get("value_text") or "").strip()
+        if not value_text:
+            continue
+        value = _normalize(value_text)
+        line = next((index for index, entry in enumerate(lines)
+                     if part_of[index] == part_index and _has_value(value, _normalize(entry[0]))), None)
+        out.append({"element": element, "value_text": value_text, "kept": (element, value_text) in kept, "line": line})
+    return out
+
+
 class Stopped(Exception):
     """The engineer stopped the check."""
 
 
-def find_items(documents: list[Document], llm, attributes: dict, should_stop=None) -> tuple[list[dict], list[str]]:
+def find_items(documents: list[Document], llm, attributes: dict, should_stop=None, live: dict | None = None,
+               on_update=None) -> tuple[list[dict], list[str]]:
     """Ask Mistral for the design items in the documents' value lines.
 
     Each item gets "source" (file and page) and "source_file" and "source_page",
     so a front end can point to where the value was found.
+
+    With ``live``, the value lines and each part's findings are written into it as
+    Mistral answers, and ``on_update`` is called, so the app can show the reading live.
     """
     lines: list[tuple[str, str, int | None]] = []
     for document in documents:
@@ -73,12 +93,14 @@ def find_items(documents: list[Document], llm, attributes: dict, should_stop=Non
 
     warnings: list[str] = []
     chunks: list[str] = []
+    part_of: list[int] = []
     current = ""
     for line, _, _ in lines:
         if current and len(current) + len(line) + 1 > CHUNK_CHARACTERS:
             chunks.append(current)
             current = ""
         current += line + "\n"
+        part_of.append(len(chunks))
     if current:
         chunks.append(current)
     if len(chunks) > MAX_CHUNKS:
@@ -90,14 +112,31 @@ def find_items(documents: list[Document], llm, attributes: dict, should_stop=Non
     if not lines and documents:
         warnings.append("No values with units were found in the text of these files.")
 
+    if live is not None:
+        live.update(
+            lines=[{"text": line[:240], "file": filename, "page": page, "part": part_of[index]}
+                   for index, (line, filename, page) in enumerate(lines)],
+            parts=len(chunks), reading=None, found=[],
+        )
+    update = on_update or (lambda: None)
+
     items: list[dict] = []
-    for chunk in chunks:
+    for part_index, chunk in enumerate(chunks):
         if should_stop and should_stop():
             raise Stopped()
+        if live is not None:
+            live["reading"] = part_index
+            update()
         for part, found in _read_part(llm, chunk, attributes, warnings):
             accepted, part_warnings = accept_items(found, part, attributes)
             items.extend(accepted)
             warnings.extend(part_warnings)
+            if live is not None:
+                live["found"].extend(_live_findings(found, accepted, lines, part_of, part_index))
+        update()
+    if live is not None:
+        live["reading"] = None
+        update()
 
     for item in items:
         value = _normalize(item["value_text"])

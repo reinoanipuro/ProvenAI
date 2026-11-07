@@ -689,7 +689,15 @@ def _run(state: dict, files: list[tuple[str, bytes]], get_llm, get_retriever) ->
         llm = get_llm()
         state["_model"] = getattr(llm, "model", "Mistral")
         _progress(state, 2)
-        items, item_warnings = find_items(documents, llm, attributes, should_stop=lambda: state.get("_stop"))
+        live: dict = {}
+        state["live"] = live
+
+        def saved() -> None:
+            with _lock:
+                _save(state)
+
+        items, item_warnings = find_items(documents, llm, attributes, should_stop=lambda: state.get("_stop"),
+                                          live=live, on_update=saved)
         _progress(state, 3)
         with _lock:
             state["elements"] = _build_elements(state, items, folder)

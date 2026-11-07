@@ -80,6 +80,16 @@ export interface Inspection {
   /** True while Mistral writes the summary and reads regulations after the result is shown. */
   refining?: boolean;
   duration_s?: number;
+  /** The document's value lines and what Mistral found in each part, filled while it reads. */
+  live?: LiveReading;
+}
+export interface LiveReading {
+  lines: { text: string; file: string; page: number | null; part: number }[];
+  parts: number;
+  /** The part Mistral is reading now; null before and after. */
+  reading: number | null;
+  /** Each value Mistral returned, whether Python found it in the text (kept), and its line. */
+  found: { element: string; value_text: string; kept: boolean; line: number | null }[];
 }
 export interface InspectionSummary {
   id: string;

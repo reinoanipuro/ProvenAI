@@ -236,3 +236,14 @@ def test_stop_after_done_changes_nothing(client):
     after = client.post(f"/lovable/inspections/{done['id']}/stop").json()
     assert after["status"] == "done"
     assert after["results"] == done["results"]
+
+
+def test_live_reading_shows_lines_and_what_python_kept(client):
+    inspection = create(client)
+    live = inspection["live"]
+
+    assert live["reading"] is None
+    assert any("Clear width: 800 mm" in line["text"] for line in live["lines"])
+    corridor = next(f for f in live["found"] if f["value_text"] == "800 mm")
+    assert corridor["kept"] is True
+    assert "800 mm" in live["lines"][corridor["line"]]["text"]
