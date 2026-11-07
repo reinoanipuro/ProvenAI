@@ -161,3 +161,5 @@ body {
   body { background-image: none; }
   .sheet { box-shadow: none; }
 }
+.sheet-button[data-danger] { color: var(--fail); border-color: var(--fail); }
+.sheet-button[data-danger]:not(:disabled):hover { background: var(--fail); color: var(--card); box-shadow: 2px 2px 0 color-mix(in srgb, var(--fail) 40%, transparent); }

@@ -36,7 +36,7 @@ function History() {
             <td className="sheet-mono px-3 py-2 text-right">{done ? check.counts.fail : "–"}</td>
             <td className="sheet-mono px-3 py-2 text-right">{done ? check.counts.unknown : "–"}</td>
             <td className="sheet-mono px-3 py-2 text-right">{done ? check.counts.pass : "–"}</td>
-            <td className="px-3 py-2 text-xs">{done ? "Done" : check.status === "error" ? "Error" : "Checking …"}</td>
+            <td className="px-3 py-2 text-xs">{done ? "Done" : check.status === "error" ? "Error" : check.status === "stopped" ? "Stopped" : "Checking …"}</td>
           </tr>;
         })}
       </tbody>

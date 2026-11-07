@@ -61,7 +61,7 @@ export interface Result {
   audit: AuditEvent[];
 }
 export interface InspectionFile { id: string; name: string; size: number; type: string; pages?: number }
-export type InspectionStatus = "queued" | "running" | "done" | "error";
+export type InspectionStatus = "queued" | "running" | "done" | "error" | "stopped";
 export interface Inspection {
   id: string;
   name: string;

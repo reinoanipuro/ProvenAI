@@ -1,7 +1,7 @@
 // The result of one check: verdict, summary, the document with every issue marked in red,
 // and numbered next steps for the engineer, each with its evidence and regulation page.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { api, qk, type Inspection, type InspectionFile, type NextStep, type RegulationSource, type Result, type ShipElement, type Status, type StepKind } from "@/lib/api";
 import { PageTitle } from "./AppShell";
@@ -45,21 +45,38 @@ export function ResultPage({ id }: { id: string }) {
   const { data: insp, error } = useQuery({
     queryKey: ["inspection", id, ...qk.all()],
     queryFn: () => api.inspection(id),
-    refetchInterval: (q) => (q.state.data && (q.state.data.status === "error" || (q.state.data.status === "done" && !q.state.data.refining)) ? false : 1500),
+    refetchInterval: (q) => (q.state.data && ((q.state.data.status === "error" || q.state.data.status === "stopped") || (q.state.data.status === "done" && !q.state.data.refining)) ? false : 1500),
   });
   return <>
     <Link to="/" className="sheet-noprint text-sm hover:underline">← Check another document</Link>
     {error ? <Notice title="The result could not be loaded.">The checker did not answer. Make sure it is running (start.ps1) and reload this page.</Notice>
       : !insp ? <p className="sheet-label mt-6">Loading …</p>
       : insp.status === "error" ? <Notice title="The check stopped with an error.">{insp.progress.label}</Notice>
+      : insp.status === "stopped" ? <Notice title="Check stopped" color="var(--unknown)">{insp.progress.label} <Link to="/" className="underline">Drop a document</Link> to start a new check.</Notice>
       : insp.status !== "done" ? <Progress insp={insp} />
       : <Report insp={insp} />}
   </>;
 }
 
+/** Stops the check: a running one ends without a result; during the AI step the result shown stays. */
+function StopButton({ insp, label }: { insp: Inspection; label: string }) {
+  const client = useQueryClient();
+  const [stopping, setStopping] = useState(false);
+  async function stop() {
+    setStopping(true);
+    try { client.setQueryData(["inspection", insp.id, ...qk.all()], await api.stop(insp.id)); }
+    catch { setStopping(false); }
+  }
+  return <button type="button" className="sheet-button sheet-noprint h-7 px-3 text-[11px]" disabled={stopping}
+    data-danger onClick={() => void stop()}
+    title="Stop this check. Mistral finishes the part it is reading, then stops.">
+    <span aria-hidden className="inline-block h-2 w-2 bg-current" />{stopping ? "Stopping …" : label}
+  </button>;
+}
+
 function Progress({ insp }: { insp: Inspection }) {
   return <section className="sheet mt-4">
-    <div className="sheet-heading"><span>Checking · {insp.name}</span><span className="sheet-spinner" aria-hidden /></div>
+    <div className="sheet-heading"><span>Checking · {insp.name}</span><span className="flex items-center gap-3"><span className="sheet-spinner" aria-hidden /><StopButton insp={insp} label="Stop check" /></span></div>
     <div className="sheet-progress px-4 pt-4" aria-hidden>
       {STEPS.slice(1).map((label, index) => <span key={label} data-done={insp.progress.step > index + 1 || undefined} data-current={insp.progress.step === index + 1 || undefined} />)}
     </div>
@@ -262,7 +279,7 @@ function Report({ insp }: { insp: Inspection }) {
               {!folded && <ol>{items}</ol>}
             </li>;
           })}</ol>
-          {insp.refining && <p className="flex items-center gap-2 border-t border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)]"><span className="sheet-spinner" />{insp.progress.label}. The steps update when it finishes.</p>}
+          {insp.refining && <p className="flex items-center gap-2 border-t border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)]"><span className="sheet-spinner" /><span className="flex-1">{insp.progress.label}. The steps update when it finishes.</span><StopButton insp={insp} label="Stop AI" /></p>}
         </section>
         <details id="passed-list" className="sheet" open={!!current && current.status === "PASS"}>
           <summary className="sheet-heading cursor-pointer"><span style={{ color: COLOR.PASS }}>Meets the regulations</span><span className="sheet-mono font-normal">{passes.length}</span></summary>
@@ -517,6 +534,6 @@ function measuredText(g: Group) {
   return r.measured != null ? `${r.measured} ${r.unit}` : "not stated";
 }
 
-function Notice({ title, children }: { title: string; children: ReactNode }) {
-  return <section className="sheet mt-4" style={{ borderLeft: "8px solid var(--fail)" }}><div className="sheet-heading">{title}</div><p className="p-4">{children}</p></section>;
+function Notice({ title, color = "var(--fail)", children }: { title: string; color?: string; children: ReactNode }) {
+  return <section className="sheet mt-4" style={{ borderLeft: `8px solid ${color}` }}><div className="sheet-heading">{title}</div><p className="p-4">{children}</p></section>;
 }

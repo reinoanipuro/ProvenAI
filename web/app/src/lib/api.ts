@@ -25,6 +25,8 @@ export const api = {
     files.forEach((file) => form.append("files", file));
     return json<{ id: string }>(`${base()}/inspections`, { method: "POST", body: form });
   },
+  /** Stop a check: a running one ends without a result; during the AI step the result shown stays. */
+  stop: (id: string) => json<Inspection>(`${base()}/inspections/${encodeURIComponent(id)}/stop`, { method: "POST" }),
   /** URL of an uploaded file, for the PDF viewer. */
   fileUrl: (id: string, fileId: string) => `${base()}/inspections/${encodeURIComponent(id)}/files/${fileId}`,
   /** The text of an uploaded text or Word file, to show it with the issues marked. */

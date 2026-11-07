@@ -40,7 +40,7 @@ from .checker import check_with_regulations, unsupported_numbers, verify_citatio
 from .documents import (
     MAX_FILE_BYTES, MAX_FILES, TEXT_TYPES, new_upload_folder, read_document, safe_name,
 )
-from .intake import find_items, read_files
+from .intake import Stopped, find_items, read_files
 from .rag import load_catalog
 from .rules import IMPERIAL, LENGTH_TO_MM, LibraryRule, Limit, evaluate, load_library
 
@@ -664,8 +664,14 @@ def _mark(state: dict, label: str) -> None:
     state.setdefault("timings", []).append({"label": label, "at": round(time.time() - state.get("_started", time.time()), 1)})
 
 
+def _check_stop(state: dict) -> None:
+    if state.get("_stop"):
+        raise Stopped()
+
+
 def _progress(state: dict, step: int, label: str | None = None) -> None:
     with _lock:
+        _check_stop(state)
         if step > state.get("progress", {}).get("step", 0) and step > 1:
             _mark(state, STEPS[step - 1])
         state["progress"] = {"step": step, "label": label or STEPS[step]}
@@ -683,7 +689,7 @@ def _run(state: dict, files: list[tuple[str, bytes]], get_llm, get_retriever) ->
         llm = get_llm()
         state["_model"] = getattr(llm, "model", "Mistral")
         _progress(state, 2)
-        items, item_warnings = find_items(documents, llm, attributes)
+        items, item_warnings = find_items(documents, llm, attributes, should_stop=lambda: state.get("_stop"))
         _progress(state, 3)
         with _lock:
             state["elements"] = _build_elements(state, items, folder)
@@ -698,6 +704,7 @@ def _run(state: dict, files: list[tuple[str, bytes]], get_llm, get_retriever) ->
             _progress(state, 3, f"Finding regulation passages for values no rule covers ({number} of {len(unmatched)})")
             ai_results.append(_ai_result(state, item, check_with_regulations(item, None, retriever, catalog)))
         with _lock:
+            _check_stop(state)
             state["warnings"] = warnings + item_warnings
             state["_ai_results"] = ai_results
             _evaluate_all(state)
@@ -706,6 +713,8 @@ def _run(state: dict, files: list[tuple[str, bytes]], get_llm, get_retriever) ->
             state["duration_s"] = round(time.time() - state["_started"])
         _progress(state, 4, "Done · AI is writing the summary")
         _refiner.submit(_refine, state, unmatched, llm, retriever, catalog)
+    except Stopped:
+        pass  # The stop request already showed the check as stopped.
     except Exception as error:  # noqa: BLE001 - the app shows any failure as an error state
         with _lock:
             state["status"] = "error"
@@ -755,10 +764,14 @@ def _citations(rules: list[LibraryRule], retriever) -> dict:
 def _refine(state: dict, unmatched: list[dict], llm, retriever, catalog: dict) -> None:
     """After the result is shown: Mistral's summary, then Mistral reads the regulations for uncovered values."""
     try:
+        if state.get("_stop"):
+            return
         _write_summary(state, llm)
         lookups = unmatched[:MAX_AI_LOOKUPS]
         changed = False
         for number, item in enumerate(lookups, start=1):
+            if state.get("_stop"):
+                return
             with _lock:
                 state["progress"] = {
                     "step": 4,
@@ -771,14 +784,14 @@ def _refine(state: dict, unmatched: list[dict], llm, retriever, catalog: dict) -
                 _evaluate_all(state)
                 _save(state)
             changed = changed or result["status"] != "UNKNOWN"
-        if changed:
+        if changed and not state.get("_stop"):
             _write_summary(state, llm)
     except Exception as error:  # noqa: BLE001 - the shown result stays; only the refinement stops
         with _lock:
             state.setdefault("warnings", []).append(f"The AI step stopped early: {error}")
     finally:
         with _lock:
-            _mark(state, "AI finished")
+            _mark(state, "AI stopped" if state.get("_stop") else "AI finished")
             state["refining"] = False
             state["progress"] = {"step": 4, "label": "Done"}
             _save(state)
@@ -869,6 +882,25 @@ def create_router(get_llm, get_retriever) -> APIRouter:
             _save(state)
         _worker.submit(_run, state, received, get_llm, get_retriever)
         return {"id": state["id"]}
+
+    @router.post("/inspections/{inspection_id}/stop")
+    def stop_inspection(inspection_id: str) -> dict:
+        """Stop a check. A running check ends without a result; during the AI step the result shown stays."""
+        state = _load(inspection_id)
+        with _lock:
+            if state["status"] in ("queued", "running"):
+                state["_stop"] = True
+                state["status"] = "stopped"
+                state["progress"] = {**state["progress"], "label": "Stopped by the engineer before the check finished. Nothing was checked."}
+                _mark(state, "Stopped")
+            elif state.get("refining"):
+                state["_stop"] = True
+                state["refining"] = False
+                state["progress"] = {"step": 4, "label": "Done"}
+                if state.get("summary", {}).get("source") != "mistral":
+                    state["summary"] = {**state.get("summary", {}), "note": "The AI step was stopped by the engineer, so Python's summary is shown."}
+            _save(state)
+            return _public(state)
 
     @router.get("/inspections/{inspection_id}/files/{file_id}")
     def get_file(inspection_id: str, file_id: str) -> FileResponse:

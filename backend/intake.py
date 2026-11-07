@@ -56,7 +56,11 @@ def _read_part(llm, text: str, attributes: dict, warnings: list[str], depth: int
         return [result for half in halves for result in _read_part(llm, half, attributes, warnings, depth + 1)]
 
 
-def find_items(documents: list[Document], llm, attributes: dict) -> tuple[list[dict], list[str]]:
+class Stopped(Exception):
+    """The engineer stopped the check."""
+
+
+def find_items(documents: list[Document], llm, attributes: dict, should_stop=None) -> tuple[list[dict], list[str]]:
     """Ask Mistral for the design items in the documents' value lines.
 
     Each item gets "source" (file and page) and "source_file" and "source_page",
@@ -88,6 +92,8 @@ def find_items(documents: list[Document], llm, attributes: dict) -> tuple[list[d
 
     items: list[dict] = []
     for chunk in chunks:
+        if should_stop and should_stop():
+            raise Stopped()
         for part, found in _read_part(llm, chunk, attributes, warnings):
             accepted, part_warnings = accept_items(found, part, attributes)
             items.extend(accepted)

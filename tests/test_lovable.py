@@ -205,3 +205,34 @@ def test_next_steps_follow_the_order_of_the_document():
     steps = _next_steps(state)
     assert [step["element_id"] for step in steps[:2]] == ["E2", "E1"]
     assert all("_order" not in step for step in steps)
+
+
+class SlowLLM(FakeLLM):
+    """Mistral that takes a while per part, so the check can be stopped while it reads."""
+
+    def chat_json(self, system, user, schema, max_tokens=400):
+        time.sleep(0.3)
+        return super().chat_json(system, user, schema, max_tokens)
+
+
+def test_stop_ends_a_running_check(client, monkeypatch):
+    monkeypatch.setattr(api, "llm", SlowLLM())
+    files = [("files", ("deck5.txt", (SAMPLES / "deck5_accessibility.txt").read_bytes(), "text/plain"))]
+    inspection_id = client.post("/lovable/inspections", data={"name": "Deck 5"}, files=files).json()["id"]
+
+    stopped = client.post(f"/lovable/inspections/{inspection_id}/stop").json()
+    assert stopped["status"] == "stopped"
+    assert "Stopped" in stopped["progress"]["label"]
+
+    # The background run notices and ends without turning the check back to running or done.
+    time.sleep(1.5)
+    after = client.get(f"/lovable/inspections/{inspection_id}").json()
+    assert after["status"] == "stopped"
+    assert after["results"] == []
+
+
+def test_stop_after_done_changes_nothing(client):
+    done = create(client)
+    after = client.post(f"/lovable/inspections/{done['id']}/stop").json()
+    assert after["status"] == "done"
+    assert after["results"] == done["results"]
