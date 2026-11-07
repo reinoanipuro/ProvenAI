@@ -3,6 +3,7 @@ uvicorn
 streamlit
 requests
 pytest
-pypdf
+pypdfium2
 chromadb
 sentence-transformers
+rank-bm25
