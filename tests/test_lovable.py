@@ -65,7 +65,8 @@ def client(tmp_path, monkeypatch):
 def wait_until_done(client, inspection_id):
     for _ in range(200):
         inspection = client.get(f"/lovable/inspections/{inspection_id}").json()
-        if inspection["status"] in ("done", "error"):
+        # Also wait for the background AI step, which saves the inspection when it ends.
+        if inspection["status"] == "error" or (inspection["status"] == "done" and not inspection["refining"]):
             return inspection
         time.sleep(0.05)
     raise AssertionError("inspection did not finish")
@@ -81,9 +82,8 @@ def create(client):
     return wait_until_done(client, response.json()["id"])
 
 
-def test_rules_match_the_apps_format_and_pass_their_self_tests(client):
-    rules = client.get("/lovable/rules").json()
-    by_id = {rule["id"]: rule for rule in rules}
+def test_rules_become_one_check_per_limit():
+    by_id = {check["lovable"]["id"]: check["lovable"] for check in lovable.library_checks()}
 
     assert by_id["ADA-403.5.1"]["condition"] == {
         "attr": "walking_route_clear_width", "label": "Clear width of a walking route or corridor",
@@ -93,8 +93,6 @@ def test_rules_match_the_apps_format_and_pass_their_self_tests(client):
     assert by_id["ADA-505.4-min"]["condition"]["op"] == ">="
     assert by_id["ADA-505.4-max"]["condition"]["op"] == "<="
     assert by_id["ADA-405.2"]["condition"]["unit"] == "%"
-    assert all(test["passed"] for rule in rules for test in rule["tests"])
-    assert {rule_set["id"] for rule_set in client.get("/lovable/rulesets").json()} >= {"ada", "pvag", "load-line", "bwm"}
 
 
 def test_inspection_runs_and_python_decides(client):
@@ -146,48 +144,34 @@ def test_result_has_regulation_pages_next_steps_and_a_summary(client):
     assert inspection["status"] == "done" and inspection["progress"]["label"] == "Done"
 
 
-def test_engineer_answers_are_rechecked(client):
+def test_listing_files_and_text_view(client):
     inspection = create(client)
-    corridor = next(element for element in inspection["elements"] if element["name"] == "Passenger corridor")
-
-    updated = client.post(
-        f"/lovable/inspections/{inspection['id']}/answers",
-        json={"answers": [{"attr": "walking_route_clear_width", "element_id": corridor["id"], "value": 950}]},
-    ).json()
-    result = next(item for item in updated["results"] if item["id"] == f"ADA-403.5.1:{corridor['id']}")
-
-    assert result["status"] == "PASS"
-    assert result["evidence"][0]["method"] == "Engineer input"
-
-
-def test_review_notes_and_listing(client):
-    inspection = create(client)
-    result_id = inspection["results"][0]["id"]
-    base = f"/lovable/inspections/{inspection['id']}/results/{result_id}"
-
-    client.post(f"{base}/review")
-    updated = client.post(f"{base}/notes", json={"note": "Checked on site"}).json()
-    result = next(item for item in updated["results"] if item["id"] == result_id)
     summaries = client.get("/lovable/inspections").json()
+    text = client.get(f"/lovable/inspections/{inspection['id']}/files/f0/text").json()
 
-    assert result["reviewed"] and not result["needs_review"]
-    assert result["notes"] == ["Checked on site"]
     assert summaries[0]["id"] == inspection["id"] and summaries[0]["counts"]["fail"] >= 1
     assert client.get(f"/lovable/inspections/{inspection['id']}/files/f0").status_code == 200
     assert client.get(f"/lovable/inspections/{inspection['id']}/files/../x").status_code == 404
+    assert "Clear width: 800 mm" in text["pages"][0]["text"]
 
 
-def test_pasted_rule_without_a_source_cannot_be_approved(client):
-    proposal = client.post("/lovable/rules", json={
-        "text": "Cabin headroom shall be at least 2000 mm.", "clause_ref": "Made up", "rule_set_id": "ada",
-        "applies_to": "cabin", "name": "Headroom",
-    }).json()
+def test_too_many_files_are_refused(client):
+    files = [("files", (f"f{number}.txt", b"x", "text/plain")) for number in range(11)]
 
-    assert proposal["ok"] and proposal["rule"]["status"] == "proposed"
-    response = client.post(f"/lovable/rules/{proposal['rule']['id']}/approve", json=proposal["rule"])
-    assert response.status_code == 422
-    assert client.post("/lovable/rules", json={"text": "Doors should be nice."}).json()["ok"] is False
+    assert client.post("/lovable/inspections", data={"name": "x"}, files=files).status_code == 422
 
 
 def test_unknown_inspection_is_404(client):
     assert client.get("/lovable/inspections/nope").status_code == 404
+
+
+def test_a_check_cut_short_by_a_restart_is_closed(client):
+    inspection = create(client)
+    path = lovable._path(inspection["id"])
+    saved = path.read_text(encoding="utf-8")
+    lovable._store.clear()
+    path.write_text(saved.replace('"refining": false', '"refining": true'), encoding="utf-8")
+
+    reloaded = client.get(f"/lovable/inspections/{inspection['id']}").json()
+
+    assert reloaded["refining"] is False and reloaded["progress"]["label"] == "Done"

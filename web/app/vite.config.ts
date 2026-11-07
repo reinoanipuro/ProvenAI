@@ -15,7 +15,7 @@ export default defineConfig({
   vite: {
     // Pre-bundle up front so a late re-optimization can't load two React copies.
     optimizeDeps: {
-      include: ["sonner", "pdfjs-dist", "@radix-ui/react-dropdown-menu", "@radix-ui/react-tabs", "@radix-ui/react-dialog", "@radix-ui/react-switch", "@radix-ui/react-checkbox", "@radix-ui/react-tooltip"],
+      include: ["pdfjs-dist"],
     },
   },
 });

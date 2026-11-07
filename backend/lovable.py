@@ -9,8 +9,8 @@ per rule. This module provides that API on top of the existing pipeline:
 - Every PASS / FAIL comes from backend.rules.evaluate, as everywhere else.
 - Items without an approved rule are looked up in the regulations
   (backend.checker.check_with_regulations) and always need review.
-- Values found in a PDF or a picture get their position on the page, so the
-  app can mark them in red where they are printed.
+- Values found in a PDF get their position on the page, so the app can mark
+  them in red where they are printed.
 - The result is shown as soon as Python has checked the values. Mistral then
   writes the summary and reads the regulations for values no rule covers, in
   the background ("refining"), and the result updates as it goes.
@@ -36,13 +36,13 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from . import llm as llm_module
-from .checker import _match_quote, approve_rule, check_with_regulations, unsupported_numbers, verify_citation
+from .checker import check_with_regulations, unsupported_numbers, verify_citation
 from .documents import (
-    MAX_FILE_BYTES, MAX_FILES, TEXT_TYPES, new_upload_folder, ocr_positions, read_document, safe_name,
+    MAX_FILE_BYTES, MAX_FILES, TEXT_TYPES, new_upload_folder, read_document, safe_name,
 )
 from .intake import find_items, read_files
 from .rag import load_catalog
-from .rules import IMPERIAL, LENGTH_TO_MM, LibraryRule, Limit, Source, evaluate, load_library, parse_limits
+from .rules import IMPERIAL, LENGTH_TO_MM, LibraryRule, Limit, evaluate, load_library
 
 ROOT = Path(__file__).resolve().parent.parent
 INSPECTION_DIR = ROOT / ".runtime" / "inspections"
@@ -64,7 +64,6 @@ OWNER = "Design engineer"
 
 _lock = threading.RLock()
 _store: dict[str, dict] = {}
-_proposals: dict[str, dict] = {}
 _worker = ThreadPoolExecutor(max_workers=1)
 # The slow AI part runs after the result is shown, one inspection at a time.
 _refiner = ThreadPoolExecutor(max_workers=1)
@@ -137,25 +136,6 @@ def _evaluate(rule: LibraryRule, attr: dict | None) -> dict:
     }
 
 
-def _tests(rule: LibraryRule, op: str, value: float, unit: str) -> list[dict]:
-    step = 1 if float(value).is_integer() else 0.1
-    below, above = round(value - step, 2), round(value + step, 2)
-    attr = lambda number: {"value": number, "unit": unit, "value_text": f"{number} {unit}"}  # noqa: E731
-    conflict = {**attr(value), "source_file": "test-a", "conflicts": [{**attr(value - step), "source_file": "test-b"}]}
-    cases = [
-        ("Exact boundary", value, attr(value), "PASS"),
-        ("Just below limit", below, attr(below), "FAIL" if op == ">=" else "PASS"),
-        ("Just above limit", above, attr(above), "PASS" if op == ">=" else "FAIL"),
-        ("Missing evidence", None, None, "UNKNOWN"),
-        ("Contradictory sources", "conflict", conflict, "UNKNOWN"),
-    ]
-    tests = []
-    for name, shown, evidence, expected in cases:
-        actual = _evaluate(rule, evidence)["status"]
-        tests.append({"name": name, "input": shown, "expected": expected, "actual": actual, "passed": actual == expected})
-    return tests
-
-
 def library_checks(rule_set_ids: list[str] | None = None) -> list[dict]:
     """Approved rules as the app's checks, each with the rule it is evaluated by."""
     attributes, rules = load_library()
@@ -184,30 +164,12 @@ def library_checks(rule_set_ids: list[str] | None = None) -> list[dict]:
                         "value": value, "unit": unit, "deficit": word,
                     },
                     "required_inputs": [rule.attribute],
-                    "tests": _tests(part, op, value, unit),
                     "recommend_fail": f"Change {{element}} by {{diff}} to meet {regulation} {rule.source.section}.",
                     "missing_owner": OWNER,
                     "status": "approved",
                 },
             })
     return checks
-
-
-def rule_sets() -> list[dict]:
-    _, rules = load_library()
-    catalog = load_catalog()
-    found: dict[str, dict] = {}
-    for rule in rules:
-        regulation = _regulation(rule, catalog)
-        entry = found.setdefault(_slug(regulation), {
-            "id": _slug(regulation), "name": regulation, "authority": regulation, "description": "", "_count": 0,
-        })
-        entry["_count"] += 1
-    return [
-        {**{key: value for key, value in entry.items() if not key.startswith("_")},
-         "description": f"{entry['_count']} approved rules, each checked against its regulation page."}
-        for entry in found.values()
-    ]
 
 
 # ---------------------------------------------------------------- inspections
@@ -228,8 +190,26 @@ def _load(inspection_id: str) -> dict:
             path = _path(inspection_id)
             if not path.is_file():
                 raise HTTPException(status_code=404, detail=f"Inspection {inspection_id} not found.")
-            _store[inspection_id] = json.loads(path.read_text(encoding="utf-8"))
+            _store[inspection_id] = _after_restart(json.loads(path.read_text(encoding="utf-8")))
         return _store[inspection_id]
+
+
+def _after_restart(state: dict) -> dict:
+    """A check read from disk has no job running: close what the last run left unfinished."""
+    if state.get("status") in ("queued", "running"):
+        state["status"] = "error"
+        state["progress"] = {**state.get("progress", {}), "label": "The checker was restarted before this check finished. Drop the document again."}
+    if state.get("refining"):
+        state["refining"] = False
+        state["progress"] = {"step": 4, "label": "Done"}
+        if state.get("summary"):
+            state["summary"].setdefault("note", "The AI step did not finish because the checker was restarted, so Python's summary is shown.")
+    # Checks saved before next steps and summaries existed get them from their results.
+    if state.get("status") == "done" and "next_steps" not in state:
+        state["next_steps"] = _next_steps(state)
+    if state.get("status") == "done" and not state.get("summary"):
+        state["summary"] = {"text": _template_summary(state), "source": "python"}
+    return state
 
 
 def _all() -> list[dict]:
@@ -244,22 +224,8 @@ def _all() -> list[dict]:
 
 
 def _public(state: dict) -> dict:
-    """The inspection as the app expects it, with reviews and notes applied."""
-    reviews = state.get("_reviews", {})
-    results = []
-    for result in state.get("results", []):
-        review = reviews.get(result["id"], {})
-        reviewed = bool(review.get("reviewed"))
-        results.append({
-            **result,
-            "reviewed": reviewed,
-            "needs_review": result["needs_review"] and not reviewed,
-            "notes": review.get("notes", []),
-            "audit": result["audit"] + review.get("events", []),
-        })
-    public = {key: value for key, value in state.items() if not key.startswith("_")}
-    public["results"] = results
-    return public
+    """The inspection as the app sees it, without the internal fields."""
+    return {key: value for key, value in state.items() if not key.startswith("_")}
 
 
 def _deck(text: str) -> str:
@@ -283,12 +249,7 @@ def _locate(folder: Path, filename: str, page: int | None, texts: list[str]) -> 
     import pypdfium2
 
     path = folder / filename
-    if not page or not path.is_file():
-        return None
-    ocr_lines = ocr_positions(folder, filename).get(str(page))
-    if ocr_lines:
-        return _locate_ocr(path, page, ocr_lines, texts)
-    if path.suffix.lower() != ".pdf":
+    if not page or path.suffix.lower() != ".pdf" or not path.is_file():
         return None
     document = pypdfium2.PdfDocument(str(path))
     try:
@@ -315,45 +276,6 @@ def _locate(folder: Path, filename: str, page: int | None, texts: list[str]) -> 
         min(box[0] for box in boxes) - margin, min(box[1] for box in boxes) - margin,
         max(box[2] for box in boxes) + margin, max(box[3] for box in boxes) + margin,
     ]
-
-
-def _locate_ocr(path: Path, page: int, lines: list, texts: list[str]) -> list[float] | None:
-    """Where a text is on a picture or scanned page, from its saved OCR lines.
-
-    Returned like _locate: from the bottom left, in PDF points for a PDF page
-    and in pixels for a picture, which is what the app draws on.
-    """
-    def norm(text: str) -> str:
-        return "".join(text.lower().split())
-
-    hit = None
-    for text in texts:
-        wanted = norm(text)
-        if len(wanted) < 2:
-            continue
-        hit = next((line for line in lines if norm(line[0]) == wanted), None) or next(
-            (line for line in lines if wanted in norm(line[0])), None
-        )
-        if hit:
-            break
-    if not hit:
-        return None
-    if path.suffix.lower() == ".pdf":
-        import pypdfium2
-
-        document = pypdfium2.PdfDocument(str(path))
-        try:
-            width, height = document[page - 1].get_size()
-        finally:
-            document.close()
-    else:
-        from PIL import Image, ImageOps
-
-        with Image.open(path) as image:
-            width, height = ImageOps.exif_transpose(image).size
-    _, x0, y0, x1, y1 = hit
-    margin = 0.006 * max(width, height)
-    return [x0 * width - margin, (1 - y1) * height - margin, x1 * width + margin, (1 - y0) * height + margin]
 
 
 def _attr(item: dict, rule: LibraryRule | None, folder: Path) -> dict:
@@ -539,29 +461,8 @@ def _ai_result(state: dict, item: dict, found: dict) -> dict:
     }
 
 
-def _questions(state: dict) -> list[dict]:
-    """Missing or unreadable values the engineer can enter to resolve UNKNOWN checks."""
-    attributes, _ = load_library()
-    questions: dict[str, dict] = {}
-    for result in state["results"]:
-        if result["status"] != "UNKNOWN" or result["check_id"].startswith("AI-"):
-            continue
-        for attr in result["missing"]:
-            label = attributes.get(attr, {}).get("label", attr.replace("_", " "))
-            question = questions.setdefault(attr, {
-                "attr": attr, "label": label[:1].upper() + label[1:], "unit": result["unit"], "owner": OWNER,
-                "resolves_count": 0, "element_ids": [], "check_ids": [],
-            })
-            question["resolves_count"] += 1
-            if result["element_id"] not in question["element_ids"]:
-                question["element_ids"].append(result["element_id"])
-            question["check_ids"].append(result["id"])
-    return sorted(questions.values(), key=lambda question: -question["resolves_count"])
-
-
 def _evaluate_all(state: dict) -> None:
     state["results"] = _rule_results(state, state.get("_citations", {})) + state.get("_ai_results", [])
-    state["questions"] = _questions(state)
     state["next_steps"] = _next_steps(state)
 
 
@@ -774,9 +675,7 @@ def _run(state: dict, files: list[tuple[str, bytes]], get_llm, get_retriever) ->
         attributes, rules = load_library()
         llm = get_llm()
         state["_model"] = getattr(llm, "model", "Mistral")
-        pictures = sum(1 for document in documents for page in document.pages if page.read_by == "ocr")
-        _progress(state, 2, "Finding design values (Mistral)"
-                  + (f" · {pictures} picture page{'s' if pictures != 1 else ''} read with OCR" if pictures else ""))
+        _progress(state, 2)
         items, item_warnings = find_items(documents, llm, attributes)
         _progress(state, 3)
         with _lock:
@@ -857,69 +756,14 @@ def _refine(state: dict, unmatched: list[dict], llm, retriever, catalog: dict) -
 
 
 def warm_up(get_retriever) -> None:
-    """Load the regulation search, confirm the rule quotes and load OCR before the first upload."""
+    """Load the regulation search and confirm the rule quotes before the first upload."""
     def run() -> None:
         try:
             _citations(load_library()[1], get_retriever())
         except Exception:  # noqa: BLE001 - the first inspection does this itself if warm-up fails
             pass
-        from .ocr import warm_up as ocr_warm_up
-
-        ocr_warm_up()
 
     _worker.submit(run)
-
-
-# ---------------------------------------------------------------- proposals
-
-
-def _propose(payload: dict, get_retriever) -> dict:
-    """A rule proposed from pasted regulation text, kept as a proposal until approved.
-
-    Approval needs the text's source page, so the regulations are searched for
-    it; without a source the proposal can be tested but not approved.
-    """
-    text = str(payload.get("text", "")).strip()
-    lowered = text.lower()
-    op = ">=" if re.search(r"at least|minimum|not less than|no less than", lowered) else (
-        "<=" if re.search(r"maximum|not exceed|not more than|no more than|at most", lowered) else None
-    )
-    quantity = "length"
-    limits = parse_limits(text, quantity) or parse_limits(text, "percentage")
-    if limits and limits[0].unit == "percent":
-        quantity = "percentage"
-    if not op or not limits:
-        return {"ok": False, "error": "No measurable limit with minimum or maximum wording was found. Nothing was proposed."}
-
-    source = None
-    retriever = get_retriever()
-    if retriever is not None:
-        for passage in retriever.search(text, top_k=5):
-            quote, _ = _match_quote(text, passage["text"])
-            if quote:
-                source = Source(passage["filename"], passage["page"], passage.get("section", ""), quote)
-                break
-    attribute = _slug(payload.get("name") or "proposed value").replace("-", "_")
-    rule = LibraryRule(
-        id=f"PROPOSED-{attribute}", title=str(payload.get("name") or "Proposed rule"), attribute=attribute,
-        quantity=quantity, minimum=limits if op == ">=" else (), maximum=limits if op == "<=" else (),
-        required_text=next((match.group(0) for match in re.finditer(r"\d+(?:[.,]\d+)?\s*\S+", text)), ""),
-        exceptions="", source=source or Source("", 0, "", text),
-    )
-    value, unit = _display(limits)
-    lovable_rule = {
-        "id": rule.id, "rule_set_id": payload.get("rule_set_id") or "", "rule_set": payload.get("rule_set_id") or "",
-        "name": rule.title,
-        "clause_ref": payload.get("clause_ref") or (f"{source.filename} p.{source.page}" if source else "No source found"),
-        "clause_text": text, "applies_to": payload.get("applies_to") or "cabin",
-        "condition": {"attr": attribute, "label": rule.title, "op": op, "value": value, "unit": unit,
-                      "deficit": "below minimum" if op == ">=" else "above maximum"},
-        "required_inputs": [attribute], "tests": _tests(rule, op, value, unit),
-        "recommend_fail": "Change {element} by {diff} to comply.", "missing_owner": OWNER, "status": "proposed",
-    }
-    with _lock:
-        _proposals[rule.id] = {"lovable": lovable_rule, "rule": rule, "has_source": source is not None}
-    return {"ok": True, "rule": lovable_rule}
 
 
 # ---------------------------------------------------------------- routes
@@ -932,69 +776,17 @@ def create_router(get_llm, get_retriever) -> APIRouter:
     def health() -> dict:
         return {"status": "ok"}
 
-    @router.get("/rulesets")
-    def list_rule_sets() -> list[dict]:
-        return rule_sets()
-
-    @router.get("/rules")
-    def list_rules() -> list[dict]:
-        with _lock:
-            proposed = [entry["lovable"] for entry in _proposals.values()]
-        return [check["lovable"] for check in library_checks()] + proposed
-
-    @router.post("/rules")
-    def propose_rule(payload: dict) -> dict:
-        return _propose(payload, get_retriever)
-
-    @router.post("/rules/{rule_id}/approve")
-    def approve(rule_id: str, payload: dict) -> dict:
-        approved = {check["lovable"]["id"]: check["lovable"] for check in library_checks()}
-        if rule_id in approved:
-            return approved[rule_id]
-        with _lock:
-            entry = _proposals.get(rule_id)
-        if entry is None:
-            raise HTTPException(status_code=404, detail=f"No proposed rule {rule_id}.")
-        if any(not test.get("passed") for test in entry["lovable"]["tests"]):
-            raise HTTPException(status_code=422, detail="Every self-test must pass before approval.")
-        if not entry["has_source"]:
-            raise HTTPException(
-                status_code=422,
-                detail="This text was not found in the regulation PDFs, so it cannot be approved without a source page.",
-            )
-        rule: LibraryRule = entry["rule"]
-        proposal = {
-            "attribute": {"name": rule.attribute, "label": rule.title, "quantity": rule.quantity},
-            "rule": {
-                "id": rule.id.replace("PROPOSED-", "CANDIDATE-"), "title": rule.title, "attribute": rule.attribute,
-                "required_text": rule.required_text, "exceptions": "",
-                "source": dataclasses.asdict(rule.source),
-                **({"min": [dataclasses.asdict(limit) for limit in rule.minimum]} if rule.minimum else {}),
-                **({"max": [dataclasses.asdict(limit) for limit in rule.maximum]} if rule.maximum else {}),
-            },
-        }
-        try:
-            approve_rule(proposal)
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
-        with _lock:
-            _proposals.pop(rule_id, None)
-        return {**entry["lovable"], "status": "approved"}
-
     @router.get("/inspections")
     def list_inspections() -> list[dict]:
         summaries = []
         for state in sorted(_all(), key=lambda state: state["created_at"], reverse=True):
-            public = _public(state)
-            results = public["results"]
+            # One count per design value, as on the result page: a value checked by ADA and PVAG counts once.
+            statuses = [group["status"] for group in _groups(state)]
             summaries.append({
                 "id": state["id"], "name": state["name"], "created_at": state["created_at"],
                 "file_count": len(state["files"]), "status": state["status"],
                 "counts": {
-                    "pass": sum(result["status"] == "PASS" for result in results),
-                    "fail": sum(result["status"] == "FAIL" for result in results),
-                    "unknown": sum(result["status"] == "UNKNOWN" for result in results),
-                    "review": sum(bool(result["needs_review"]) for result in results),
+                    "pass": statuses.count("PASS"), "fail": statuses.count("FAIL"), "unknown": statuses.count("UNKNOWN"),
                 },
             })
         return summaries
@@ -1038,60 +830,16 @@ def create_router(get_llm, get_retriever) -> APIRouter:
             "id": f"insp-{upload_id}", "name": name.strip() or "Untitled inspection", "project": "",
             "created_at": _now(), "status": "queued", "progress": {"step": 0, "label": STEPS[0]},
             "rule_set_ids": [item for item in ruleset_ids if item], "files": listed,
-            "elements": [], "results": [], "questions": [],
+            "elements": [], "results": [],
             "summary": None, "next_steps": [], "warnings": [], "refining": False,
             "_folder": str(folder.relative_to(ROOT)) if folder.is_relative_to(ROOT) else str(folder),
-            "_reviews": {}, "_ai_results": [], "_citations": {}, "_started": time.time(),
+            "_ai_results": [], "_citations": {}, "_started": time.time(),
         }
         with _lock:
             _store[state["id"]] = state
             _save(state)
         _worker.submit(_run, state, received, get_llm, get_retriever)
         return {"id": state["id"]}
-
-    @router.post("/inspections/{inspection_id}/answers")
-    def submit_answers(inspection_id: str, payload: dict) -> dict:
-        with _lock:
-            state = _load(inspection_id)
-            units = {check["rule"].attribute: check["lovable"]["condition"]["unit"] for check in library_checks()}
-            for answer in payload.get("answers", []):
-                element = next((item for item in state["elements"] if item["id"] == answer.get("element_id")), None)
-                value = answer.get("value")
-                if element is None or not isinstance(value, (int, float)):
-                    continue
-                attr = answer.get("attr", "")
-                unit = units.get(attr, "mm")
-                element["attrs"][attr] = {
-                    "value": value, "unit": unit, "value_text": f"{value} {unit}", "confidence": "high",
-                    "quote": f"Entered by engineer: {value} {unit}", "source_file": "Manual entry",
-                    "page": None, "section": "Missing information form", "method": "Engineer input",
-                }
-            _evaluate_all(state)
-            state["summary"] = {"text": _template_summary(state), "source": "python"}
-            _save(state)
-            return _public(state)
-
-    @router.post("/inspections/{inspection_id}/results/{result_id}/review")
-    def mark_reviewed(inspection_id: str, result_id: str) -> dict:
-        with _lock:
-            state = _load(inspection_id)
-            review = state["_reviews"].setdefault(result_id, {"notes": [], "events": []})
-            review["reviewed"] = True
-            review["events"].append({"at": _now(), "actor": "engineer", "event": "Marked as reviewed"})
-            _save(state)
-            return _public(state)
-
-    @router.post("/inspections/{inspection_id}/results/{result_id}/notes")
-    def add_note(inspection_id: str, result_id: str, payload: dict) -> dict:
-        note = str(payload.get("note", "")).strip()[:2000]
-        with _lock:
-            state = _load(inspection_id)
-            if note:
-                review = state["_reviews"].setdefault(result_id, {"notes": [], "events": []})
-                review["notes"].append(note)
-                review["events"].append({"at": _now(), "actor": "engineer", "event": f"Note: {note}"})
-                _save(state)
-            return _public(state)
 
     @router.get("/inspections/{inspection_id}/files/{file_id}")
     def get_file(inspection_id: str, file_id: str) -> FileResponse:

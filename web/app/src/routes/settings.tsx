@@ -1,36 +1,48 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
-import { PageHeader } from "@/components/app/AppShell";
+import { PageTitle } from "@/components/app/AppShell";
 import { api } from "@/lib/api";
-import { setSettings, useSettings } from "@/lib/settings";
+import { DEFAULT_SETTINGS, setSettings, useSettings } from "@/lib/settings";
 
 export const Route = createFileRoute("/settings")({
-  head: () => ({
-    meta: [
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-      { title: "Settings — ProvenAI" },
-      { name: "description", content: "Configure the on-premise API connection and demo data mode." },
-      { property: "og:title", content: "Settings — ProvenAI" },
-      { property: "og:description", content: "API connection, demo mode and deployment information." },
-    ],
-  }),
+  head: () => ({ meta: [{ title: "Settings — ProvenAI" }, { name: "description", content: "Address of the ProvenAI checker." }] }),
   component: SettingsPage,
 });
 
 function SettingsPage() {
-  const s = useSettings();
-  const [url, setUrl] = useState(s.apiUrl);
-  return <div className="checker-document-page">
-    <PageHeader title="Settings" />
-    <div className="document-settings">
-      <section className="settings-rule"><label htmlFor="api">API BASE URL</label><div className="flex min-w-0 gap-2"><Input id="api" value={url} onChange={e => setUrl(e.target.value)} className="font-mono min-w-0"/><Button variant="outline" onClick={async () => { setSettings({apiUrl:url}); const h=await api.health(); toast[h.ok || s.demo ? 'success' : 'warning'](s.demo ? 'Saved. Demo data active' : h.ok ? 'API connected' : 'Saved. API unreachable'); }}>Save & test</Button></div></section>
-      <section className="settings-rule"><label>DEMO DATA</label><Switch checked={s.demo} onCheckedChange={demo => setSettings({demo})} aria-label="Use demo data"/></section>
-      <section className="settings-rule"><label>DEPLOYMENT</label><dl className="properties-grid"><dt>MODEL</dt><dd>Mistral via Ollama. Local deployment configuration.</dd><dt>CHECK ENGINE</dt><dd>Versioned deterministic rules. Missing or conflicting evidence is UNKNOWN.</dd><dt>FALLBACK</dt><dd>Demo data when API is unreachable.</dd></dl></section>
-    </div>
+  const settings = useSettings();
+  const [url, setUrl] = useState(settings.apiUrl);
+  const [status, setStatus] = useState("");
+  async function save(next: string) {
+    setSettings({ apiUrl: next });
+    setUrl(next);
+    setStatus("Testing …");
+    setStatus(await api.health() ? "Saved. The checker answered." : "Saved, but the checker did not answer at this address.");
+  }
+  return <div className="mx-auto max-w-3xl">
+    <PageTitle label="ProvenAI" title="Settings" />
+    <section className="sheet mt-4">
+      <div className="sheet-heading">Checker address</div>
+      <div className="space-y-3 p-4 text-sm">
+        <p>The web app sends documents to the ProvenAI checker. It runs on this computer when started with start.ps1.</p>
+        <div className="flex flex-wrap gap-2">
+          <input aria-label="Checker address" value={url} onChange={(e) => setUrl(e.target.value)} className="sheet-mono min-w-0 flex-1 border border-[var(--foreground)] bg-[var(--card)] px-2 py-1 text-sm" />
+          <button type="button" className="sheet-button" data-primary onClick={() => void save(url)}>Save and test</button>
+          <button type="button" className="sheet-button" onClick={() => void save(DEFAULT_SETTINGS.apiUrl)}>Default</button>
+        </div>
+        {status && <p role="status">{status}</p>}
+      </div>
+    </section>
+    <section className="sheet mt-4">
+      <div className="sheet-heading">How results are decided</div>
+      <table className="w-full border-collapse text-sm"><tbody>
+        {[
+          ["Reading", "Mistral (ministral-3:8b) via Ollama, on this computer. It only finds values in the text."],
+          ["Deciding", "Python compares each value with the limit quoted from the regulation page. No AI decides pass or fail."],
+          ["Regulations", "The PDFs in data/regulations, searched locally. Each result names the file and page."],
+          ["Summary", "Written by Mistral and kept only if every number in it is in the results."],
+        ].map(([label, text]) => <tr key={label} className="border-b border-[var(--border)]"><td className="sheet-label w-32 px-4 py-2 align-top">{label}</td><td className="px-4 py-2">{text}</td></tr>)}
+      </tbody></table>
+    </section>
   </div>;
 }

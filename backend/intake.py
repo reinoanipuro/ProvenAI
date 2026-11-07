@@ -106,13 +106,3 @@ def find_items(documents: list[Document], llm, attributes: dict) -> tuple[list[d
             f"{match[0]}, page {match[1]}" if match and match[1] else (match[0] if match else "")
         )
     return items, warnings
-
-
-def describe(document: Document) -> dict:
-    return {
-        "filename": document.filename,
-        "kind": document.kind,
-        "text_pages": len(document.pages),
-        "text_characters": document.text_characters,
-        "pictures": [{"page": picture.page, "status": picture.status} for picture in document.pictures],
-    }

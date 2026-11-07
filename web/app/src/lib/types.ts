@@ -1,6 +1,7 @@
 export type Status = "PASS" | "FAIL" | "UNKNOWN";
 export type Confidence = "high" | "medium" | "low";
-export type Method = "OCR" | "Vector measurement" | "Text" | "3D model" | "Engineer input";
+// The shapes the checker (backend/lovable.py) returns.
+export type Method = "Text" | "Engineer input";
 export type ElementType = "cabin" | "door" | "corridor";
 
 export interface Evidence {
@@ -39,8 +40,6 @@ export interface Result {
   element_id: string;
   status: Status;
   needs_review: boolean;
-  reviewed?: boolean | undefined;
-  notes?: string[] | undefined;
   rule_set: string;
   clause_ref: string;
   clause_text: string;
@@ -59,15 +58,6 @@ export interface Result {
   sources?: RegulationSource[] | undefined;
   audit: AuditEvent[];
 }
-export interface Question {
-  attr: string;
-  label: string;
-  unit: string;
-  owner: string;
-  resolves_count: number;
-  element_ids: string[];
-  check_ids: string[];
-}
 export interface InspectionFile { id: string; name: string; size: number; type: string; pages?: number }
 export type InspectionStatus = "queued" | "running" | "done" | "error";
 export interface Inspection {
@@ -81,8 +71,6 @@ export interface Inspection {
   files: InspectionFile[];
   elements: ShipElement[];
   results: Result[];
-  questions: Question[];
-  previous_revision?: { id: string; label: string };
   /** Python's summary at first, replaced by Mistral's once its numbers are checked. */
   summary?: { text: string; source: "mistral" | "python"; note?: string } | null;
   next_steps?: NextStep[];
@@ -97,38 +85,8 @@ export interface InspectionSummary {
   created_at: string;
   file_count: number;
   status: InspectionStatus;
-  changes?: { new_violations: number; fixed: number; previous_label: string } | undefined;
-  counts: { pass: number; fail: number; unknown: number; review: number };
+  counts: { pass: number; fail: number; unknown: number };
 }
-export interface RuleSet { id: string; name: string; authority: string; description: string }
-export interface RuleCondition {
-  attr: string;
-  label: string;
-  op: ">=" | "<=";
-  value: number;
-  unit: string;
-  /** word used in the plain-language reason when violated, e.g. "too narrow" */
-  deficit: string;
-}
-export type TestInput = number | null | "conflict";
-export interface RuleTest { name: string; input: TestInput; expected: Status; actual?: Status; passed?: boolean }
-export interface Rule {
-  id: string;
-  rule_set_id: string;
-  rule_set: string;
-  name: string;
-  clause_ref: string;
-  clause_text: string;
-  applies_to: ElementType;
-  accessible_only?: boolean;
-  condition: RuleCondition;
-  required_inputs: string[];
-  tests: RuleTest[];
-  recommend_fail: string;
-  missing_owner: string;
-  status: "approved" | "proposed";
-}
-export interface Answer { attr: string; element_id: string; value: number }
 export interface RegulationSource {
   filename: string;
   page: number | null;
