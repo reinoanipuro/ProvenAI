@@ -1,4 +1,5 @@
 from backend.rag import (
+    RegulatoryRetriever,
     _heading_of,
     _split_text,
     chunks_from_pages,
@@ -77,3 +78,25 @@ def test_tokenize_keeps_identifiers_and_their_parts():
 
 def test_rank_fusion_prefers_items_found_by_both_methods():
     assert reciprocal_rank_fusion([["a", "b"], ["c", "b"]])[0] == "b"
+
+
+def _retriever_with(records: dict[str, dict]) -> RegulatoryRetriever:
+    retriever = object.__new__(RegulatoryRetriever)
+    retriever._records = records
+    retriever._by_file = {}
+    for chunk_id, record in records.items():
+        retriever._by_file.setdefault(record["filename"], []).append(chunk_id)
+    return retriever
+
+
+def test_find_passage_matches_quote_on_the_cited_page_only():
+    text = "The clear width of walking\nsurfaces shall be 36 inches (915 mm) minimum."
+    retriever = _retriever_with({
+        "a": {"filename": "ada.pdf", "page": 120, "page_end": 121, "text": text},
+        "b": {"filename": "pvag.pdf", "page": 121, "page_end": 121, "text": text},
+    })
+    quote = "the clear width of walking surfaces shall be 36 inches (915 mm) minimum."
+
+    assert retriever.find_passage("ada.pdf", 121, quote)["chunk_id"] == "a"
+    assert retriever.find_passage("ada.pdf", 119, quote) is None
+    assert retriever.find_passage("ada.pdf", 121, "48 inches minimum") is None

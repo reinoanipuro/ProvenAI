@@ -5,5 +5,10 @@ requests
 pytest
 pypdfium2
 chromadb
-sentence-transformers
+onnxruntime
+tokenizers
+huggingface-hub
+numpy
 rank-bm25
+pillow
+python-multipart
