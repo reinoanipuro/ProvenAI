@@ -13,15 +13,24 @@ REGULATIONS_DIR = ROOT / "data" / "regulations"
 CATALOG_NAME = "catalog.json"
 VECTOR_DB_DIR = Path(os.environ.get("PROVENAI_INDEX_DIR", ROOT / ".runtime" / "chroma"))
 COLLECTION_NAME = "ship_compliance_documents"
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"
-RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+# Both models run through ONNX Runtime (see onnx_models.py). Changing the
+# embedding model requires 'python rebuild_rag.py'.
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_ONNX_FILE = "onnx/model_O3.onnx"
+EMBEDDING_MAX_TOKENS = 256
+RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L6-v2"
+RERANKER_ONNX_FILE = "onnx/model_O3.onnx"
+RERANKER_MAX_TOKENS = 512
 # all-MiniLM-L6-v2 reads about 256 tokens, so longer chunks would be cut off silently.
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 120
 MIN_CHUNK_BEFORE_SECTION_BREAK = 120
 CANDIDATES_PER_METHOD = 30
-RERANK_POOL = 30
+# Reranking is most of the query time. In tests/eval_rag.py, 20 candidates rank
+# exactly as well as 30.
+RERANK_POOL = 20
 RRF_K = 60
+SEARCH_CACHE_SIZE = 256
 
 _ROMAN_OR_ID = r"(?:\d+[A-Za-z]?(?:[.\-/]\d+)*|[IVXLC]+(?:-\d+)?|[A-Z](?:-\d+)?)"
 # Case-sensitive on purpose: running text such as "section 4 of the" is not a heading.
@@ -331,18 +340,31 @@ def reciprocal_rank_fusion(rankings: list[list[str]], k: int = RRF_K) -> list[st
     return [item for item, _ in sorted(scores.items(), key=lambda pair: (-pair[1], pair[0]))]
 
 
+def load_embedder():
+    from .onnx_models import OnnxEmbedder
+
+    return OnnxEmbedder(EMBEDDING_MODEL, EMBEDDING_ONNX_FILE, EMBEDDING_MAX_TOKENS)
+
+
+def load_reranker():
+    from .onnx_models import OnnxCrossEncoder
+
+    return OnnxCrossEncoder(RERANKER_MODEL, RERANKER_ONNX_FILE, RERANKER_MAX_TOKENS)
+
+
+def normalize_quote(text: str) -> str:
+    """Compare quotes regardless of line breaks, spacing, case, dashes and curly quotes."""
+    text = text.replace("’", "'").replace("“", '"').replace("”", '"')
+    text = text.replace("–", "-").replace("—", "-").replace(" ", " ")
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
 class RegulatoryRetriever:
     """Vector and keyword search merged together, then reranked by a CrossEncoder."""
 
-    def __init__(
-        self,
-        vector_db_dir: Path = VECTOR_DB_DIR,
-        embedding_model: str = EMBEDDING_MODEL,
-        reranker_model: str = RERANKER_MODEL,
-    ):
+    def __init__(self, vector_db_dir: Path = VECTOR_DB_DIR):
         import chromadb
         from rank_bm25 import BM25Okapi
-        from sentence_transformers import CrossEncoder, SentenceTransformer
 
         client = chromadb.PersistentClient(path=str(vector_db_dir))
         try:
@@ -364,9 +386,13 @@ class RegulatoryRetriever:
                 stored["ids"], stored["documents"], stored["metadatas"]
             )
         }
+        self._by_file: dict[str, list[str]] = {}
+        for chunk_id in self._ids:
+            self._by_file.setdefault(self._records[chunk_id]["filename"], []).append(chunk_id)
         self._bm25 = BM25Okapi([tokenize(self._search_text(item)) for item in self._ids])
-        self._embedding_model = SentenceTransformer(embedding_model)
-        self._reranker = CrossEncoder(reranker_model)
+        self._embedding_model = load_embedder()
+        self._reranker = load_reranker()
+        self._cache: dict[tuple[str, int], list[dict]] = {}
 
     def _search_text(self, chunk_id: str) -> str:
         record = self._records[chunk_id]
@@ -381,10 +407,37 @@ class RegulatoryRetriever:
         if top_k < 1 or top_k > 50:
             raise ValueError("top_k must be between 1 and 50.")
 
+        key = (query.strip(), top_k)
+        if key not in self._cache:
+            if len(self._cache) >= SEARCH_CACHE_SIZE:
+                del self._cache[next(iter(self._cache))]
+            self._cache[key] = self._search(query, top_k)
+        return [dict(result) for result in self._cache[key]]
+
+    def find_passage(self, filename: str, page: int, quote: str) -> dict | None:
+        """Return the indexed chunk of `filename` covering `page` that contains `quote`.
+
+        Citation checks need an exact lookup, not a relevance ranking: the right
+        chunk must not be missed because other passages scored higher.
+        """
+        wanted = normalize_quote(quote)
+        if not wanted:
+            return None
+        on_page = [
+            chunk_id
+            for chunk_id in self._by_file.get(filename, [])
+            if self._records[chunk_id]["page"]
+            <= page
+            <= self._records[chunk_id].get("page_end", self._records[chunk_id]["page"])
+        ]
+        for chunk_id in on_page:
+            if wanted in normalize_quote(self._records[chunk_id]["text"]):
+                return {**self._records[chunk_id], "chunk_id": chunk_id}
+        return None
+
+    def _search(self, query: str, top_k: int) -> list[dict]:
         pool = min(CANDIDATES_PER_METHOD, len(self._ids))
-        query_embedding = self._embedding_model.encode(
-            query, normalize_embeddings=True
-        ).tolist()
+        query_embedding = self._embedding_model.encode([query])[0].tolist()
         vector = self._collection.query(
             query_embeddings=[query_embedding], n_results=pool, include=["distances"]
         )
@@ -408,7 +461,7 @@ class RegulatoryRetriever:
                 **self._records[chunk_id],
                 "chunk_id": chunk_id,
                 "vector_score": vector_scores.get(chunk_id),
-                "rerank_score": round(float(score), 4),
+                "rerank_score": round(score, 4),
             }
             for chunk_id, score in zip(candidate_ids, rerank_scores)
         ]
@@ -422,10 +475,9 @@ def rebuild_index(
 ) -> int:
     """Delete and rebuild the Chroma collection from the current PDF files."""
     import chromadb
-    from sentence_transformers import SentenceTransformer
 
     chunks = all_pdf_chunks(regulations_dir)
-    embedding_model = SentenceTransformer(EMBEDDING_MODEL)
+    embedding_model = load_embedder()
     vector_db_dir.mkdir(parents=True, exist_ok=True)
     client = chromadb.PersistentClient(path=str(vector_db_dir))
     collection_names = {
@@ -440,9 +492,7 @@ def rebuild_index(
     batch_size = 1000
     for start in range(0, len(chunks), batch_size):
         batch = chunks[start : start + batch_size]
-        embeddings = embedding_model.encode(
-            [chunk.search_text for chunk in batch], normalize_embeddings=True
-        ).tolist()
+        embeddings = embedding_model.encode([chunk.search_text for chunk in batch]).tolist()
         collection.add(
             ids=[chunk.chunk_id for chunk in batch],
             documents=[chunk.text for chunk in batch],

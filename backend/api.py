@@ -1,4 +1,6 @@
 import os
+import threading
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +16,42 @@ from .pipeline import inspect_document
 from .rag import RegulatoryRetriever
 from .rules import load_library
 
-app = FastAPI(title="ProvenAI")
+retriever: RegulatoryRetriever | None = None
+_retriever_lock = threading.Lock()
+llm = OllamaClient()
+
+
+def _get_retriever() -> RegulatoryRetriever:
+    global retriever
+    with _retriever_lock:
+        if retriever is None:
+            retriever = RegulatoryRetriever()
+    return retriever
+
+
+def _optional_retriever() -> RegulatoryRetriever | None:
+    try:
+        return _get_retriever()
+    except ValueError:
+        return None
+
+
+# The Lovable web app in web/app talks to this API under /lovable.
+def _warm_up() -> None:
+    """Load the index and models before the first request, so it does not wait for them."""
+    try:
+        _get_retriever().search("warm up", top_k=1)
+    except ValueError:
+        pass  # Index not built yet; requests report it with instructions.
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    threading.Thread(target=_warm_up, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="ProvenAI", lifespan=lifespan)
 # Lets a browser page, such as the Lovable app in web/, call this API.
 app.add_middleware(
     CORSMiddleware,
@@ -27,25 +64,6 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
-retriever: RegulatoryRetriever | None = None
-llm = OllamaClient()
-
-
-def _get_retriever() -> RegulatoryRetriever:
-    global retriever
-    if retriever is None:
-        retriever = RegulatoryRetriever()
-    return retriever
-
-
-def _optional_retriever() -> RegulatoryRetriever | None:
-    try:
-        return _get_retriever()
-    except ValueError:
-        return None
-
-
-# The Lovable web app in web/app talks to this API under /lovable.
 app.include_router(lovable.create_router(lambda: llm, _optional_retriever), prefix="/lovable")
 
 
@@ -55,7 +73,7 @@ class InspectionRequest(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "rag": "ready" if retriever is not None else "loading"}
 
 
 class SearchRequest(BaseModel):

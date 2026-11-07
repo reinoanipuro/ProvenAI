@@ -80,8 +80,6 @@ def _slug(text: str) -> str:
 def _keywords(text: str) -> set[str]:
     words = re.findall(r"[a-z]{4,}", text.lower())
     return {word.rstrip("s") for word in words if word not in _STOPWORDS}
-
-
 def accept_items(items: list[dict], text: str | None, attributes: dict) -> tuple[list[dict], list[str]]:
     """Keep design values that are really in the input, and questions without a value."""
     accepted: list[dict] = []
@@ -138,18 +136,15 @@ def verify_citation(rule: LibraryRule, retriever) -> dict:
         citation["reason"] = "Regulation search is not available, so the quote was not checked."
         return citation
 
-    quote = _normalize(source.quote)
-    for result in retriever.search(source.quote, top_k=5):
-        same_file = result["filename"] == source.filename
-        on_page = result["page"] <= source.page <= result.get("page_end", result["page"])
-        if same_file and on_page and quote in _normalize(result["text"]):
-            citation.update(
-                verified=True,
-                reason="Quote found on the cited page.",
-                chunk_id=result.get("chunk_id"),
-                passage=result["text"],
-            )
-            return citation
+    passage = retriever.find_passage(source.filename, source.page, source.quote)
+    if passage is not None:
+        citation.update(
+            verified=True,
+            reason="Quote found on the cited page.",
+            chunk_id=passage.get("chunk_id"),
+            passage=passage["text"],
+        )
+        return citation
     citation["reason"] = "The quote was not found on the cited page of the indexed document."
     return citation
 

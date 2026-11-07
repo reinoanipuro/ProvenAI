@@ -16,18 +16,20 @@ class FakeRetriever:
         if not any(rule.source.quote == query for rule in load_library()[1]):
             return self.passages[:top_k]
         # ADA and PVAG share some sentences, so every matching passage is returned.
+
+    def find_passage(self, filename: str, page: int, quote: str) -> dict | None:
         _, rules = load_library()
-        return [
-            {
-                "filename": rule.source.filename,
-                "page": rule.source.page,
-                "page_end": rule.source.page,
-                "chunk_id": "test-chunk",
-                "text": f"Intro text. {rule.source.quote} More text.",
-            }
-            for rule in rules
-            if rule.source.quote == query
-        ][:top_k]
+        for rule in rules:
+            source = rule.source
+            if (source.filename, source.page, source.quote) == (filename, page, quote):
+                return {
+                    "filename": filename,
+                    "page": page,
+                    "page_end": page,
+                    "chunk_id": "test-chunk",
+                    "text": f"Intro text. {quote} More text.",
+                }
+        return None
 
 
 class FakeLLM:
