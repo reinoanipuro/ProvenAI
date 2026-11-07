@@ -64,6 +64,9 @@
 .sheet-step-category { border-bottom: 1px solid var(--border); background: var(--background); }
 .sheet-step-category-title { display: flex; justify-content: space-between; gap: 8px; padding: 6px 10px; font: 600 12px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--border); }
 .sheet-step-category > ol { margin-left: 14px; border-left: 2px solid var(--foreground); }
+.sheet-category-head > button:not(.sheet-step-number) { padding-bottom: 8px; }
+.sheet-step-category[data-done] .sheet-category-head .sheet-step-title { text-decoration: line-through; opacity: 0.55; }
+.sheet-step-category[data-done] .sheet-category-head .sheet-step-number { background: var(--pass); border-color: var(--pass); color: var(--background); }
 .sheet-step-category > ol > .sheet-step:last-child { border-bottom: 0; }
 .sheet-step-row { display: flex; align-items: flex-start; }
 .sheet-step-row > button:not(.sheet-step-number) { flex: 1; min-width: 0; display: flex; gap: 10px; align-items: flex-start; padding: 10px 10px 10px 0; text-align: left; }

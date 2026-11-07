@@ -10,6 +10,8 @@ export interface Evidence {
   unit: string;
   /** The value as written in the design, such as "1:12" or "800 mm". */
   value_text?: string | undefined;
+  /** Where this value is printed on its PDF page, PDF points from the bottom left. */
+  bbox?: [number, number, number, number] | null | undefined;
   confidence: Confidence;
   quote: string;
   source_file: string;

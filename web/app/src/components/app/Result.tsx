@@ -78,7 +78,7 @@ function Progress({ insp }: { insp: Inspection }) {
 
 function Report({ insp }: { insp: Inspection }) {
   const steps = insp.next_steps ?? [];
-  const { set: doneSteps, toggle: toggleDone, clear: clearDone } = useStepSet(insp.id, "done-steps");
+  const { set: doneSteps, toggle: toggleDone, setMany: setManyDone, clear: clearDone } = useStepSet(insp.id, "done-steps");
   const { set: fixSteps, toggle: toggleFix } = useStepSet(insp.id, "fix-steps");
   const stepsDone = steps.filter((s) => doneSteps.has(stepKey(s))).length;
   // What a step is now: the engineer can mark it done (OK) or turn a CHECK into a FIX.
@@ -100,7 +100,8 @@ function Report({ insp }: { insp: Inspection }) {
     for (const section of sections) if (section.steps.length > 1) section.name = elements.get(section.key) ?? "Same element";
     return sections;
   }, [orderedSteps, insp.elements]);
-  const position = useMemo(() => new Map(stepSections.flatMap((s) => s.steps).map((step, i) => [step.number, i + 1] as const)), [stepSections]);
+  // A single note is "3"; the notes inside a main task are "3.1", "3.2" …
+  const position = useMemo(() => new Map(stepSections.flatMap((section, si) => section.steps.map((step, i) => [step.number, section.name ? `${si + 1}.${i + 1}` : `${si + 1}`] as const))), [stepSections]);
   const baseGroups = useMemo(() => groupResults(insp), [insp]);
   // A value takes the worst state of its steps, so the counters and the marks follow the engineer's choices.
   const groups = useMemo(() => baseGroups.map((g): Group => {
@@ -112,10 +113,10 @@ function Report({ insp }: { insp: Inspection }) {
   const byResult = useMemo(() => new Map(groups.flatMap((g) => g.results.map((r) => [r.id, g] as const))), [groups]);
   // Each mark on the document carries the number of its first step, so the list and the page match.
   const markNumbers = useMemo(() => {
-    const numbers = new Map<string, number>();
+    const numbers = new Map<string, string>();
     for (const step of stepSections.flatMap((s) => s.steps)) for (const rid of step.result_ids) {
       const g = byResult.get(rid);
-      if (g && !numbers.has(g.id)) numbers.set(g.id, position.get(step.number) ?? step.number);
+      if (g && !numbers.has(g.id)) numbers.set(g.id, position.get(step.number) ?? String(step.number));
     }
     return numbers;
   }, [stepSections, byResult, position]);
@@ -125,7 +126,8 @@ function Report({ insp }: { insp: Inspection }) {
   const files = insp.files.filter((f) => PDF.test(f.name) || TEXT.test(f.name));
   const [selected, setSelected] = useState<string | null>(null);
   const [openStep, setOpenStep] = useState<number | null>(null);
-  const [focusStep, setFocusStep] = useState<{ number: number; at: number } | null>(null);
+  const [focusStep, setFocusStep] = useState<{ id: string; at: number } | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [showOk, setShowOk] = useState(false);
   const [fileId, setFileId] = useState<string | null>(null);
   const current = groups.find((g) => g.id === selected) ?? null;
@@ -145,15 +147,27 @@ function Report({ insp }: { insp: Inspection }) {
     select(group);
     const step = steps.find((s) => s.result_ids.some((rid) => group.results.some((r) => r.id === rid)));
     setOpenStep(step?.number ?? null);
-    setFocusStep(step ? { number: step.number, at: Date.now() } : null);
+    // A main task with several notes: show it open and scroll to its heading.
+    const section = step && stepSections.find((s) => s.name && s.steps.includes(step));
+    if (section) setCollapsed((old) => { const next = new Set(old); next.delete(section.key); return next; });
+    setFocusStep(step ? { id: section ? `section-${section.key}` : `step-${step.number}`, at: Date.now() } : null);
     if (!step) document.getElementById("passed-list")?.setAttribute("open", "");
   }
   // After a click in the document, scroll the notes list to the note that opened.
   useEffect(() => {
     if (!focusStep) return;
-    const frame = requestAnimationFrame(() => document.getElementById(`step-${focusStep.number}`)?.scrollIntoView({ block: "start", behavior: "smooth" }));
+    const frame = requestAnimationFrame(() => document.getElementById(focusStep.id)?.scrollIntoView({ block: "start", behavior: "smooth" }));
     return () => cancelAnimationFrame(frame);
   }, [focusStep]);
+  // Values that belong to one main task share one box in the document.
+  const sectionOf = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const section of stepSections) {
+      if (!section.name) continue;
+      for (const step of section.steps) for (const rid of step.result_ids) { const g = byResult.get(rid); if (g) map.set(g.id, section.key); }
+    }
+    return map;
+  }, [stepSections, byResult]);
   // A value the engineer settled (it was an issue or a check, and its steps are done) leaves the document.
   const marked = groups.filter((g) => (g.original === "PASS" || g.status !== "PASS") && (g.status !== "PASS" || showOk || g.id === selected));
 
@@ -216,7 +230,7 @@ function Report({ insp }: { insp: Inspection }) {
         </p>
         {!file ? <p className="p-4 text-sm">No file to show.</p>
           : TEXT.test(file.name) ? <TextDocument insp={insp} file={file} groups={marked} numbers={markNumbers} selected={selected} onSelect={selectFromDocument} />
-          : <PdfDocument insp={insp} file={file} groups={marked} numbers={markNumbers} selected={selected} onSelect={selectFromDocument} />}
+          : <PdfDocument insp={insp} file={file} groups={marked} numbers={markNumbers} sectionOf={sectionOf} selected={selected} onSelect={selectFromDocument} />}
       </section>
 
       <div className="report-side flex flex-col gap-4 lg:max-h-[78vh] lg:overflow-y-auto">
@@ -225,15 +239,27 @@ function Report({ insp }: { insp: Inspection }) {
             <button type="button" className="sheet-noprint text-xs normal-case tracking-normal underline disabled:no-underline disabled:opacity-40" disabled={stepsDone === 0} onClick={clearDone}>Uncheck all steps</button>
             {stepsDone} of {steps.length} done</span></div>
           <ol>{stepSections.map((section) => {
-            const items = section.steps.map((step) => <StepItem key={step.number} step={step} position={position.get(step.number) ?? step.number} kind={kindOf(step)} open={openStep === step.number} onToggle={() => toggleStep(step)}
+            const items = section.steps.map((step) => <StepItem key={step.number} step={step} position={position.get(step.number) ?? String(step.number)} kind={kindOf(step)} open={openStep === step.number} onToggle={() => toggleStep(step)}
               done={doneSteps.has(stepKey(step))} onDone={() => toggleDone(step)}
               canFix={step.kind !== "fix" && step.kind !== "info"} isFix={fixSteps.has(stepKey(step))} onFix={() => toggleFix(step)}
               groups={[...new Set(step.result_ids.map((rid) => byResult.get(rid)).filter((g): g is Group => !!g))]} onShow={select} />);
             if (!section.name) return items;
-            const finished = section.steps.filter((s) => doneSteps.has(stepKey(s))).length;
-            return <li key={section.key} className="sheet-step-category">
-              <p className="sheet-step-category-title"><span>{section.name}</span><span className="sheet-mono font-normal">{section.steps.length} notes · {finished} done</span></p>
-              <ol>{items}</ol>
+            const finished = section.steps.filter((s) => doneSteps.has(stepKey(s))).length, all = finished === section.steps.length;
+            const kinds = section.steps.map(kindOf), main: StepKind = kinds.includes("fix") ? "fix" : all ? "info" : kinds.includes("check") || kinds.includes("confirm") || kinds.includes("measure") ? "check" : "info";
+            const folded = collapsed.has(section.key), number = position.get(section.steps[0]!.number)!.split(".")[0];
+            return <li key={section.key} id={`section-${section.key}`} className="sheet-step-category scroll-mt-2" data-done={all || undefined} style={{ ["--step-color" as string]: KIND[main].color }}>
+              <div className="sheet-step-row sheet-category-head">
+                <button type="button" className="sheet-step-number" aria-pressed={all} onClick={() => setManyDone(section.steps, !all)}
+                  title={all ? "All notes done. Click to mark them as not done" : "Click to mark every note of this task as done"} aria-label={`Task ${number}: ${all ? "done" : "not done"}`}>{all ? "✓" : number}</button>
+                <button type="button" aria-expanded={!folded} onClick={() => setCollapsed((old) => { const next = new Set(old); if (!next.delete(section.key)) next.add(section.key); return next; })}>
+                  <span className="min-w-0 flex-1">
+                    <span className="sheet-tag" style={{ color: KIND[main].color }}>{KIND[main].label}</span>
+                    <span className="sheet-step-title mt-1 block font-semibold">{section.name}</span>
+                    <span className="sheet-mono block text-xs font-normal text-[var(--muted-foreground)]">{section.steps.length} notes · {finished} done {folded ? "▸" : "▾"}</span>
+                  </span>
+                </button>
+              </div>
+              {!folded && <ol>{items}</ol>}
             </li>;
           })}</ol>
           {insp.refining && <p className="flex items-center gap-2 border-t border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)]"><span className="sheet-spinner" />{insp.progress.label}. The steps update when it finishes.</p>}
@@ -285,15 +311,23 @@ function useStepSet(inspectionId: string, name: string) {
       return next;
     });
   }
+  function setMany(steps: NextStep[], on: boolean) {
+    setDone((old) => {
+      const next = new Set(old);
+      for (const step of steps) { if (on) next.add(stepKey(step)); else next.delete(stepKey(step)); }
+      try { localStorage.setItem(storageKey, JSON.stringify([...next])); } catch { /* the ticks then last until the page is closed */ }
+      return next;
+    });
+  }
   function clear() {
     setDone(new Set());
     try { localStorage.removeItem(storageKey); } catch { /* nothing stored */ }
   }
-  return { set, toggle, clear };
+  return { set, toggle, setMany, clear };
 }
 
 function StepItem({ step, position, kind: kindName, open, onToggle, groups, onShow, done, onDone, canFix, isFix, onFix }: {
-  step: NextStep; position: number; kind: StepKind; open: boolean; onToggle: () => void; groups: Group[]; onShow: (g: Group) => void;
+  step: NextStep; position: string; kind: StepKind; open: boolean; onToggle: () => void; groups: Group[]; onShow: (g: Group) => void;
   done: boolean; onDone: () => void; canFix: boolean; isFix: boolean; onFix: () => void;
 }) {
   const kind = KIND[kindName];
@@ -395,18 +429,47 @@ function RegulationPage({ source }: { source: RegulationSource }) {
   </div>;
 }
 
-function PdfDocument({ insp, file, groups, numbers, selected, onSelect }: { insp: Inspection; file: InspectionFile; groups: Group[]; numbers: Map<string, number>; selected: string | null; onSelect: (g: Group) => void }) {
+function PdfDocument({ insp, file, groups, numbers, sectionOf, selected, onSelect }: { insp: Inspection; file: InspectionFile; groups: Group[]; numbers: Map<string, string>; sectionOf: Map<string, string>; selected: string | null; onSelect: (g: Group) => void }) {
   // Marks only for values found in this file, at a known place.
-  const placed = (e: ShipElement | undefined): e is ShipElement => !!e && e.bbox.some((v) => v !== 0) && Object.values(e.attrs).some((a) => a.source_file === file.name);
-  const marks: Mark[] = groups.flatMap((g) => placed(g.element) ? [{ id: g.id, status: g.status, page: g.element.page, bbox: g.element.bbox, label: numbers.get(g.id) }] : []);
-  const missing = groups.filter((g) => g.status === "FAIL" && fileOf(g) === file.name && !placed(g.element)).length;
+  // Each mark covers its own value. Older results only have the box of the whole element.
+  const boxOf = (g: Group): { page: number; bbox: [number, number, number, number] } | null => {
+    const own = g.main.evidence[0];
+    if (own?.bbox?.some((v) => v !== 0) && own.source_file === file.name) return { page: own.page ?? g.element?.page ?? 1, bbox: own.bbox };
+    const e = g.element;
+    return e && e.bbox.some((v) => v !== 0) && Object.values(e.attrs).some((a) => a.source_file === file.name) ? { page: e.page, bbox: e.bbox } : null;
+  };
+  // All the open notes of one main task share a single box around their text. Marks leave when their notes are done.
+  const buckets = new Map<string, { id: string; ids: string[]; status: Status; page: number; bbox: [number, number, number, number] }>();
+  for (const g of groups) {
+    const place = boxOf(g);
+    if (!place) continue;
+    const key = `${sectionOf.get(g.id) ?? g.id}|${place.page}`, bucket = buckets.get(key);
+    if (!bucket) { buckets.set(key, { id: g.id, ids: [g.id], status: g.status, page: place.page, bbox: [...place.bbox] }); continue; }
+    bucket.ids.push(g.id);
+    if (RANK[g.status] < RANK[bucket.status]) bucket.status = g.status;
+    bucket.bbox = [Math.min(bucket.bbox[0], place.bbox[0]), Math.min(bucket.bbox[1], place.bbox[1]), Math.max(bucket.bbox[2], place.bbox[2]), Math.max(bucket.bbox[3], place.bbox[3])];
+  }
+  // Separate notes printed on the same line get the same box; nest those so each stays visible.
+  const seen = new Map<string, number>();
+  const marks: Mark[] = [...buckets.values()].map((b) => {
+    const key = `${b.page}|${b.bbox.map((v) => Math.round(v)).join(",")}`, n = seen.get(key) ?? 0;
+    seen.set(key, n + 1);
+    const [x0, y0, x1, y1] = b.bbox, inset = Math.min(n * 2.5, Math.max(0, (y1 - y0) / 2 - 1));
+    // The badge shows the first step number of the notes in the box.
+    const first = b.ids.map((id) => numbers.get(id)).find((n) => n != null);
+    // One box for several notes of a main task shows the task number ("3"), one note its own ("3.1").
+    const label = first && b.ids.length > 1 ? first.split(".")[0] : first;
+    return { id: b.id, status: b.status, page: b.page, bbox: [x0, y0 + inset, x1, y1 - inset] as [number, number, number, number], label };
+  });
+  const selectedMark = [...buckets.values()].find((b) => selected !== null && b.ids.includes(selected))?.id ?? selected;
+  const missing = groups.filter((g) => g.status === "FAIL" && fileOf(g) === file.name && !boxOf(g)).length;
   return <>
     {missing > 0 && <p className="border-b border-[var(--border)] px-3 py-1 text-xs text-[var(--fail)]">{missing} issue{missing > 1 ? "s" : ""} could not be placed on the page; see the steps.</p>}
-    <PdfView key={file.id} url={api.fileUrl(insp.id, file.id)} marks={marks} selected={selected} onSelect={(id) => { const g = groups.find((x) => x.id === id); if (g) onSelect(g); }} />
+    <PdfView key={file.id} url={api.fileUrl(insp.id, file.id)} marks={marks} selected={selectedMark} onSelect={(id) => { const g = groups.find((x) => x.id === id); if (g) onSelect(g); }} />
   </>;
 }
 
-function TextDocument({ insp, file, groups, numbers, selected, onSelect }: { insp: Inspection; file: InspectionFile; groups: Group[]; numbers: Map<string, number>; selected: string | null; onSelect: (g: Group) => void }) {
+function TextDocument({ insp, file, groups, numbers, selected, onSelect }: { insp: Inspection; file: InspectionFile; groups: Group[]; numbers: Map<string, string>; selected: string | null; onSelect: (g: Group) => void }) {
   const { data, error } = useQuery({ queryKey: ["file-text", insp.id, file.id, ...qk.all()], queryFn: () => api.fileText(insp.id, file.id) });
   const selectedLine = useRef<HTMLSpanElement>(null);
   useEffect(() => { selectedLine.current?.scrollIntoView({ block: "center", behavior: "smooth" }); }, [selected, data]);

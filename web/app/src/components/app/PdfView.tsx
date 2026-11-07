@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Status } from "@/lib/types";
 
-export interface Mark { id: string; status: Status; page: number; bbox: [number, number, number, number]; label?: number | undefined }
+export interface Mark { id: string; status: Status; page: number; bbox: [number, number, number, number]; label?: string | undefined }
 type View = { x: number; y: number; w: number; h: number };
 
 const COLOR: Record<Status, string> = { FAIL: "var(--fail)", UNKNOWN: "var(--unknown)", PASS: "var(--pass)" };
@@ -124,7 +124,7 @@ export function PdfView({ url, marks, selected, onSelect }: { url: string; marks
                 strokeDasharray={mark.status === "UNKNOWN" ? "5 3" : undefined} vectorEffect="non-scaling-stroke" className="mark-box" />
               {mark.label != null && <g transform={`translate(${Math.max(r, box.x - r * 0.6)} ${Math.max(r, box.y - r * 0.2)})`}>
                 <circle r={r} fill={color} stroke="var(--card)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-                <text textAnchor="middle" dominantBaseline="central" fontSize={r * 1.15} fontWeight={600} fill="var(--card)" style={{ fontFamily: "var(--font-mono)" }}>{mark.label}</text>
+                <text textAnchor="middle" dominantBaseline="central" fontSize={r * (mark.label.length > 2 ? 0.8 : 1.15)} fontWeight={600} fill="var(--card)" style={{ fontFamily: "var(--font-mono)" }}>{mark.label}</text>
               </g>}
             </g>;
           })}
